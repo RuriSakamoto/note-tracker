@@ -142,12 +142,17 @@
       min-height: 48px;
     }
 
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
     .btn-primary {
       background: var(--primary);
       color: white;
     }
 
-    .btn-primary:hover {
+    .btn-primary:hover:not(:disabled) {
       background: var(--primary-dark);
     }
 
@@ -156,7 +161,7 @@
       color: var(--gray-700);
     }
 
-    .btn-secondary:hover {
+    .btn-secondary:hover:not(:disabled) {
       background: var(--gray-300);
     }
 
@@ -679,6 +684,29 @@
       font-weight: bold;
       color: var(--gray-600);
     }
+
+    /* Checkbox */
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 16px;
+      padding: 12px;
+      background: var(--primary-light);
+      border-radius: 8px;
+    }
+
+    .checkbox-group input[type="checkbox"] {
+      width: 20px;
+      height: 20px;
+      cursor: pointer;
+    }
+
+    .checkbox-group label {
+      cursor: pointer;
+      font-weight: 500;
+      color: var(--primary-dark);
+    }
   </style>
 </head>
 <body>
@@ -853,7 +881,7 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeArticleModal()">キャンセル</button>
         <button class="btn btn-danger" id="delete-article-btn" onclick="deleteArticle()" style="display: none;">削除</button>
-        <button class="btn btn-primary" onclick="saveArticle()">保存</button>
+        <button class="btn btn-primary" id="save-article-btn" onclick="saveArticle()">保存</button>
       </div>
     </div>
   </div>
@@ -879,6 +907,11 @@
         <div id="csv-preview" style="margin-top: 16px; display: none;">
           <h4 style="margin-bottom: 8px;">プレビュー</h4>
           <div id="csv-preview-content" style="max-height: 200px; overflow: auto; background: var(--gray-100); padding: 12px; border-radius: 8px; font-size: 0.875rem;"></div>
+        </div>
+
+        <div class="checkbox-group" id="update-status-group" style="display: none;">
+          <input type="checkbox" id="update-draft-status" checked>
+          <label for="update-draft-status">下書き記事を「投稿済み」に更新する</label>
         </div>
       </div>
       <div class="modal-footer">
@@ -911,7 +944,7 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeStatsModal()">キャンセル</button>
-        <button class="btn btn-primary" onclick="saveStats()">保存</button>
+        <button class="btn btn-primary" id="save-stats-btn" onclick="saveStats()">保存</button>
       </div>
     </div>
   </div>
@@ -948,11 +981,13 @@
     let currentTags = [];
     let currentTasks = {};
     let csvData = null;
+    let csvDraftArticles = [];
     let trendChart = null;
     let compareChart = null;
     let currentFilter = 'all';
     let currentGanttView = 'week';
     let currentChartView = 'daily';
+    let isProcessing = false;
 
     // 初期化
     document.addEventListener('DOMContentLoaded', () => {
@@ -1309,6 +1344,8 @@
     }
 
     async function saveArticle() {
+      if (isProcessing) return;
+      
       const id = document.getElementById('article-id').value;
       const title = document.getElementById('article-title').value.trim();
       const status = document.getElementById('article-status').value;
@@ -1319,6 +1356,12 @@
         showToast('タイトルを入力してください');
         return;
       }
+      
+      // 二重クリック防止
+      isProcessing = true;
+      const saveBtn = document.getElementById('save-article-btn');
+      saveBtn.disabled = true;
+      saveBtn.textContent = '保存中...';
       
       // タスクステータスを収集
       const taskStatuses = {};
@@ -1385,14 +1428,22 @@
       } catch (error) {
         console.error('Error saving article:', error);
         showToast('保存に失敗しました');
+      } finally {
+        isProcessing = false;
+        saveBtn.disabled = false;
+        saveBtn.textContent = '保存';
       }
     }
 
     async function deleteArticle() {
+      if (isProcessing) return;
+      
       const id = document.getElementById('article-id').value;
       if (!id) return;
       
       if (!confirm('この記事を削除しますか？')) return;
+      
+      isProcessing = true;
       
       try {
         const { error } = await supabase
@@ -1408,6 +1459,8 @@
       } catch (error) {
         console.error('Error deleting article:', error);
         showToast('削除に失敗しました');
+      } finally {
+        isProcessing = false;
       }
     }
 
@@ -1415,8 +1468,11 @@
     function openCsvModal() {
       document.getElementById('csv-modal').classList.add('active');
       csvData = null;
+      csvDraftArticles = [];
       document.getElementById('csv-preview').style.display = 'none';
+      document.getElementById('update-status-group').style.display = 'none';
       document.getElementById('import-csv-btn').disabled = true;
+      document.getElementById('csv-file').value = '';
     }
 
     function closeCsvModal() {
@@ -1430,9 +1486,9 @@
       }
     }
 
-    function processCsvFile(file) {
+    async function processCsvFile(file) {
       const reader = new FileReader();
-      reader.onload = (e) => {
+      reader.onload = async (e) => {
         const text = e.target.result;
         const lines = text.split('\n').filter(line => line.trim());
         
@@ -1468,79 +1524,147 @@
           ${data.length > 3 ? '<p>...</p>' : ''}
         `;
         
+        // CSVに含まれる記事タイトルを抽出
+        const csvTitles = [...new Set(data.map(row => 
+          (row['記事名'] || row['タイトル'] || row['title'] || '').trim()
+        ).filter(t => t))];
+        
+        // 下書き状態の記事があるかチェック
+        const { data: draftArticles } = await supabase
+          .from('articles')
+          .select('id, title')
+          .eq('status', 'draft')
+          .in('title', csvTitles);
+        
+        csvDraftArticles = draftArticles || [];
+        
+        // 下書き記事がある場合はチェックボックスを表示
+        const updateStatusGroup = document.getElementById('update-status-group');
+        if (csvDraftArticles.length > 0) {
+          updateStatusGroup.style.display = 'flex';
+          updateStatusGroup.querySelector('label').textContent = 
+            `下書き記事（${csvDraftArticles.length}件）を「投稿済み」に更新する`;
+        } else {
+          updateStatusGroup.style.display = 'none';
+        }
+        
         document.getElementById('import-csv-btn').disabled = false;
       };
       reader.readAsText(file);
     }
 
     async function importCsv() {
-      if (!csvData || csvData.length === 0) return;
+      if (!csvData || csvData.length === 0 || isProcessing) return;
+      
+      // 二重クリック防止
+      isProcessing = true;
+      const importBtn = document.getElementById('import-csv-btn');
+      importBtn.disabled = true;
+      importBtn.textContent = 'インポート中...';
       
       try {
-        // CSVデータを解析してインポート
-        // noteのCSV形式に合わせて調整が必要
+        const updateDraftStatus = document.getElementById('update-draft-status').checked;
+        
+        // CSVデータを解析
         const analyticsData = csvData.map(row => {
-          // 日付、記事名、PV、スキ、コメントを想定
           return {
             date: row['日付'] || row['date'] || new Date().toISOString().split('T')[0],
-            article_title: row['記事名'] || row['タイトル'] || row['title'] || '',
+            article_title: (row['記事名'] || row['タイトル'] || row['title'] || '').trim(),
             pv: parseInt(row['PV'] || row['ビュー'] || row['pv'] || 0),
             likes: parseInt(row['スキ'] || row['いいね'] || row['likes'] || 0),
             comments: parseInt(row['コメント'] || row['comments'] || 0)
           };
         });
         
-        // 記事ごとにグループ化してインポート
-        for (const data of analyticsData) {
-          if (!data.article_title) continue;
-          
-          // 記事を検索または作成
-          let { data: existingArticle } = await supabase
-            .from('articles')
-            .select('id')
-            .eq('title', data.article_title)
-            .single();
-          
-          let articleId;
-          if (existingArticle) {
-            articleId = existingArticle.id;
-          } else {
-            const { data: newArticle } = await supabase
-              .from('articles')
-              .insert({ title: data.article_title, status: 'published' })
-              .select()
-              .single();
-            articleId = newArticle.id;
-            
-            // デフォルトタスクを作成
-            const tasksToInsert = TASKS.map(task => ({
-              article_id: articleId,
-              task_type: task.type,
-              task_status: 'completed',
-              task_order: task.order
-            }));
-            await supabase.from('tasks').insert(tasksToInsert);
-          }
-          
-          // アナリティクスデータをupsert
+        // 記事タイトルごとにグループ化して処理
+        const uniqueTitles = [...new Set(analyticsData.map(d => d.article_title).filter(t => t))];
+        const articleIdMap = {};
+        
+        // 既存の記事を一括取得
+        const { data: existingArticles } = await supabase
+          .from('articles')
+          .select('id, title, status')
+          .in('title', uniqueTitles);
+        
+        // 既存記事のマップを作成
+        (existingArticles || []).forEach(a => {
+          articleIdMap[a.title] = a.id;
+        });
+        
+        // 下書き記事を投稿済みに更新
+        if (updateDraftStatus && csvDraftArticles.length > 0) {
+          const draftIds = csvDraftArticles.map(a => a.id);
           await supabase
-            .from('article_analytics')
-            .upsert({
-              article_id: articleId,
-              date: data.date,
-              pv: data.pv,
-              likes: data.likes,
-              comments: data.comments
-            }, { onConflict: 'article_id,date' });
+            .from('articles')
+            .update({ 
+              status: 'published',
+              published_at: new Date().toISOString()
+            })
+            .in('id', draftIds);
         }
         
-        showToast(`${analyticsData.length}件のデータをインポートしました`);
+        // 存在しない記事を作成
+        const newTitles = uniqueTitles.filter(t => !articleIdMap[t]);
+        if (newTitles.length > 0) {
+          const { data: newArticles } = await supabase
+            .from('articles')
+            .insert(newTitles.map(title => ({ title, status: 'published' })))
+            .select();
+          
+          (newArticles || []).forEach(a => {
+            articleIdMap[a.title] = a.id;
+          });
+          
+          // 新規記事のデフォルトタスクを作成
+          const tasksToInsert = [];
+          (newArticles || []).forEach(article => {
+            TASKS.forEach(task => {
+              tasksToInsert.push({
+                article_id: article.id,
+                task_type: task.type,
+                task_status: 'completed',
+                task_order: task.order
+              });
+            });
+          });
+          if (tasksToInsert.length > 0) {
+            await supabase.from('tasks').insert(tasksToInsert);
+          }
+        }
+        
+        // アナリティクスデータをupsert（重複は上書き）
+        const analyticsToUpsert = analyticsData
+          .filter(d => d.article_title && articleIdMap[d.article_title])
+          .map(d => ({
+            article_id: articleIdMap[d.article_title],
+            date: d.date,
+            pv: d.pv,
+            likes: d.likes,
+            comments: d.comments
+          }));
+        
+        if (analyticsToUpsert.length > 0) {
+          await supabase
+            .from('article_analytics')
+            .upsert(analyticsToUpsert, { onConflict: 'article_id,date' });
+        }
+        
+        let message = `${analyticsToUpsert.length}件のデータをインポートしました`;
+        if (updateDraftStatus && csvDraftArticles.length > 0) {
+          message += `（${csvDraftArticles.length}件を投稿済みに更新）`;
+        }
+        
+        showToast(message);
         closeCsvModal();
         loadArticles();
         loadAnalytics();
       } catch (error) {
         console.error('Error importing CSV:', error);
         showToast('インポートに失敗しました');
+      } finally {
+        isProcessing = false;
+        importBtn.disabled = false;
+        importBtn.textContent = 'インポート';
       }
     }
 
@@ -1557,6 +1681,8 @@
     }
 
     async function saveStats() {
+      if (isProcessing) return;
+      
       const date = document.getElementById('stats-date').value;
       const followers = parseInt(document.getElementById('stats-followers').value) || 0;
       const revenue = parseInt(document.getElementById('stats-revenue').value) || 0;
@@ -1565,6 +1691,12 @@
         showToast('日付を入力してください');
         return;
       }
+      
+      // 二重クリック防止
+      isProcessing = true;
+      const saveBtn = document.getElementById('save-stats-btn');
+      saveBtn.disabled = true;
+      saveBtn.textContent = '保存中...';
       
       try {
         const { error } = await supabase
@@ -1579,6 +1711,10 @@
       } catch (error) {
         console.error('Error saving stats:', error);
         showToast('保存に失敗しました');
+      } finally {
+        isProcessing = false;
+        saveBtn.disabled = false;
+        saveBtn.textContent = '保存';
       }
     }
 
