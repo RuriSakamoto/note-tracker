@@ -11,6 +11,9 @@ function openCsvModal() {
   document.getElementById('update-status-group').style.display = 'none';
   document.getElementById('import-csv-btn').disabled = true;
   document.getElementById('csv-file').value = '';
+  
+  // 日付入力のデフォルト値を今日に設定
+  document.getElementById('csv-date').value = new Date().toISOString().split('T')[0];
 }
 
 function closeCsvModal() {
@@ -96,10 +99,16 @@ async function importCsv() {
   
   try {
     const updateDraftStatus = document.getElementById('update-draft-status').checked;
+    const importDate = document.getElementById('csv-date').value;
     
+    if (!importDate) {
+      showToast('日付を選択してください');
+      return;
+    }
+    
+    // CSVデータを解析（累積値として取得）
     const analyticsData = csvData.map(row => {
       return {
-        date: row['日付'] || row['date'] || new Date().toISOString().split('T')[0],
         article_title: (row['記事名'] || row['タイトル'] || row['title'] || '').trim(),
         pv: parseInt(row['PV'] || row['ビュー'] || row['pv'] || 0) || 0,
         likes: parseInt(row['スキ'] || row['いいね'] || row['likes'] || 0) || 0,
@@ -107,9 +116,11 @@ async function importCsv() {
       };
     });
     
+    // 記事タイトルごとにグループ化
     const uniqueTitles = [...new Set(analyticsData.map(d => d.article_title).filter(t => t))];
     const articleIdMap = {};
     
+    // 既存の記事を一括取得
     const { data: existingArticles } = await supabase
       .from('articles')
       .select('id, title, status')
@@ -119,6 +130,7 @@ async function importCsv() {
       articleIdMap[a.title] = a.id;
     });
     
+    // 下書き記事を投稿済みに更新
     if (updateDraftStatus && csvDraftArticles.length > 0) {
       const draftIds = csvDraftArticles.map(a => a.id);
       await supabase
@@ -130,6 +142,7 @@ async function importCsv() {
         .in('id', draftIds);
     }
     
+    // 存在しない記事を作成
     const newTitles = uniqueTitles.filter(t => !articleIdMap[t]);
     if (newTitles.length > 0) {
       const { data: newArticles } = await supabase
@@ -141,6 +154,7 @@ async function importCsv() {
         articleIdMap[a.title] = a.id;
       });
       
+      // 新規記事のデフォルトタスクを作成
       const tasksToInsert = [];
       (newArticles || []).forEach(article => {
         TASKS.forEach(task => {
@@ -157,116 +171,89 @@ async function importCsv() {
       }
     }
     
-    const dataByArticleDate = {};
+    // 記事ごとにデータを整理
+    const dataByArticle = {};
     analyticsData.forEach(d => {
       if (!d.article_title || !articleIdMap[d.article_title]) return;
       const articleId = articleIdMap[d.article_title];
-      const key = `${articleId}_${d.date}`;
-      dataByArticleDate[key] = {
+      dataByArticle[articleId] = {
         articleId,
-        date: d.date,
         pv: d.pv,
         likes: d.likes,
         comments: d.comments
       };
     });
     
-    const dataByArticle = {};
-    Object.values(dataByArticleDate).forEach(d => {
-      if (!dataByArticle[d.articleId]) {
-        dataByArticle[d.articleId] = [];
-      }
-      dataByArticle[d.articleId].push(d);
-    });
-    
-    Object.keys(dataByArticle).forEach(articleId => {
-      dataByArticle[articleId].sort((a, b) => new Date(a.date) - new Date(b.date));
-    });
-    
-    // 既存のデータベースから各記事の累積データを取得
+    // 各記事について、指定日付の前日までの累積値を取得
     const articleIds = Object.keys(dataByArticle);
-    const { data: existingAnalytics } = await supabase
-      .from('article_analytics')
-      .select('*')
-      .in('article_id', articleIds)
-      .order('date', { ascending: true });
     
-    // 記事ごとに既存データを整理
-    const existingByArticle = {};
-    (existingAnalytics || []).forEach(item => {
-      if (!existingByArticle[item.article_id]) {
-        existingByArticle[item.article_id] = {};
+    // 指定日付の前日を計算
+    const targetDate = new Date(importDate);
+    const previousDate = new Date(targetDate);
+    previousDate.setDate(previousDate.getDate() - 1);
+    const previousDateStr = previousDate.toISOString().split('T')[0];
+    
+    // 各記事の指定日付以前の最新データを取得
+    const previousCumulativeByArticle = {};
+    
+    for (const articleId of articleIds) {
+      const { data: previousData } = await supabase
+        .from('article_analytics')
+        .select('*')
+        .eq('article_id', articleId)
+        .lte('date', previousDateStr)
+        .order('date', { ascending: false })
+        .limit(1);
+      
+      if (previousData && previousData.length > 0) {
+        // 既存データから累積値を再計算
+        const { data: allPreviousData } = await supabase
+          .from('article_analytics')
+          .select('pv, likes, comments')
+          .eq('article_id', articleId)
+          .lte('date', previousDateStr);
+        
+        const cumulative = {
+          pv: 0,
+          likes: 0,
+          comments: 0
+        };
+        
+        (allPreviousData || []).forEach(item => {
+          cumulative.pv += item.pv || 0;
+          cumulative.likes += item.likes || 0;
+          cumulative.comments += item.comments || 0;
+        });
+        
+        previousCumulativeByArticle[articleId] = cumulative;
+      } else {
+        // 前日データがない場合は0
+        previousCumulativeByArticle[articleId] = {
+          pv: 0,
+          likes: 0,
+          comments: 0
+        };
       }
-      existingByArticle[item.article_id][item.date] = {
-        pv: item.pv || 0,
-        likes: item.likes || 0,
-        comments: item.comments || 0
-      };
-    });
+    }
     
+    // 増分を計算してupsert用データを作成
     const analyticsToUpsert = [];
     
     Object.keys(dataByArticle).forEach(articleId => {
-      const records = dataByArticle[articleId];
-      const existingData = existingByArticle[articleId] || {};
+      const current = dataByArticle[articleId];
+      const previous = previousCumulativeByArticle[articleId];
       
-      // 既存データと新規データを統合して日付順にソート
-      const allDates = new Set([
-        ...Object.keys(existingData),
-        ...records.map(r => r.date)
-      ]);
-      const sortedDates = Array.from(allDates).sort();
+      // CSVの累積値から前日までの累積値を引いて増分を計算
+      const deltaPv = Math.max(0, current.pv - previous.pv);
+      const deltaLikes = Math.max(0, current.likes - previous.likes);
+      const deltaComments = Math.max(0, current.comments - previous.comments);
       
-      // 日付ごとの累積値を計算
-      const cumulativeByDate = {};
-      
-      // まず既存データの累積値を計算
-      let cumPv = 0, cumLikes = 0, cumComments = 0;
-      sortedDates.forEach(date => {
-        if (existingData[date]) {
-          cumPv += existingData[date].pv;
-          cumLikes += existingData[date].likes;
-          cumComments += existingData[date].comments;
-          cumulativeByDate[date] = { pv: cumPv, likes: cumLikes, comments: cumComments };
-        }
-      });
-      
-      // 新規インポートデータの処理
-      records.forEach(current => {
-        const currentDate = current.date;
-        
-        // この日付より前の最新の累積値を取得
-        let prevCumPv = 0, prevCumLikes = 0, prevCumComments = 0;
-        
-        for (let i = sortedDates.indexOf(currentDate) - 1; i >= 0; i--) {
-          const prevDate = sortedDates[i];
-          if (cumulativeByDate[prevDate]) {
-            prevCumPv = cumulativeByDate[prevDate].pv;
-            prevCumLikes = cumulativeByDate[prevDate].likes;
-            prevCumComments = cumulativeByDate[prevDate].comments;
-            break;
-          }
-        }
-        
-        // CSVの累積値から前日までの累積値を引いて増分を計算
-        const deltaPv = Math.max(0, current.pv - prevCumPv);
-        const deltaLikes = Math.max(0, current.likes - prevCumLikes);
-        const deltaComments = Math.max(0, current.comments - prevCumComments);
-        
-        // 累積値を更新
-        cumulativeByDate[currentDate] = {
-          pv: current.pv,
-          likes: current.likes,
-          comments: current.comments
-        };
-        
-        analyticsToUpsert.push({
-          article_id: articleId,
-          date: currentDate,
-          pv: deltaPv,
-          likes: deltaLikes,
-          comments: deltaComments
-        });
+      analyticsToUpsert.push({
+        article_id: articleId,
+        date: importDate,
+        pv: deltaPv,
+        likes: deltaLikes,
+        comments: deltaComments
       });
     });
     
@@ -274,7 +261,7 @@ async function importCsv() {
       await upsertArticleAnalytics(analyticsToUpsert);
     }
     
-    let message = `${analyticsToUpsert.length}件のデータをインポートしました`;
+    let message = `${analyticsToUpsert.length}件のデータを${importDate}にインポートしました`;
     if (updateDraftStatus && csvDraftArticles.length > 0) {
       message += `（${csvDraftArticles.length}件を投稿済みに更新）`;
     }
