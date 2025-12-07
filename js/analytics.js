@@ -9,6 +9,7 @@ async function loadAnalytics() {
     const articleAnalytics = await fetchArticleAnalytics();
     const overallStats = await fetchOverallStats();
     
+    // 累積値を計算
     const totals = {
       pv: 0,
       likes: 0,
@@ -48,6 +49,7 @@ function updateTrendChart(data) {
     trendChart.destroy();
   }
   
+  // データを日付ごとにグループ化（増分の合計）
   const grouped = {};
   (data || []).forEach(item => {
     let key;
@@ -71,18 +73,50 @@ function updateTrendChart(data) {
     grouped[key].comments += item.comments || 0;
   });
   
+  // 日付順にソート
   const labels = Object.keys(grouped).sort();
-  const pvData = labels.map(l => grouped[l].pv);
-  const likesData = labels.map(l => grouped[l].likes);
-  const commentsData = labels.map(l => grouped[l].comments);
+  
+  // 累積値を計算
+  let cumulativePv = 0;
+  let cumulativeLikes = 0;
+  let cumulativeComments = 0;
+  
+  const pvData = labels.map(l => {
+    cumulativePv += grouped[l].pv;
+    return cumulativePv;
+  });
+  
+  const likesData = labels.map(l => {
+    cumulativeLikes += grouped[l].likes;
+    return cumulativeLikes;
+  });
+  
+  const commentsData = labels.map(l => {
+    cumulativeComments += grouped[l].comments;
+    return cumulativeComments;
+  });
+  
+  // ラベルを見やすく整形
+  const formattedLabels = labels.map(l => {
+    if (currentChartView === 'daily') {
+      const date = new Date(l);
+      return `${date.getMonth() + 1}/${date.getDate()}`;
+    } else if (currentChartView === 'weekly') {
+      const date = new Date(l);
+      return `${date.getMonth() + 1}/${date.getDate()}～`;
+    } else {
+      const [year, month] = l.split('-');
+      return `${year}/${month}`;
+    }
+  });
   
   trendChart = new Chart(ctx, {
     type: 'line',
     data: {
-      labels,
+      labels: formattedLabels,
       datasets: [
         {
-          label: 'PV',
+          label: 'PV（累積）',
           data: pvData,
           borderColor: '#2cb696',
           backgroundColor: 'rgba(44, 182, 150, 0.1)',
@@ -90,7 +124,7 @@ function updateTrendChart(data) {
           fill: true
         },
         {
-          label: 'スキ',
+          label: 'スキ（累積）',
           data: likesData,
           borderColor: '#e74c3c',
           backgroundColor: 'rgba(231, 76, 60, 0.1)',
@@ -98,7 +132,7 @@ function updateTrendChart(data) {
           fill: true
         },
         {
-          label: 'コメント',
+          label: 'コメント（累積）',
           data: commentsData,
           borderColor: '#3498db',
           backgroundColor: 'rgba(52, 152, 219, 0.1)',
@@ -113,11 +147,28 @@ function updateTrendChart(data) {
       plugins: {
         legend: {
           position: 'top'
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              let label = context.dataset.label || '';
+              if (label) {
+                label += ': ';
+              }
+              label += context.parsed.y.toLocaleString();
+              return label;
+            }
+          }
         }
       },
       scales: {
         y: {
-          beginAtZero: true
+          beginAtZero: true,
+          ticks: {
+            callback: function(value) {
+              return value.toLocaleString();
+            }
+          }
         }
       }
     }
@@ -198,11 +249,23 @@ async function comparePeriods() {
         plugins: {
           legend: {
             position: 'top'
+          },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                return context.dataset.label + ': ' + context.parsed.y.toLocaleString();
+              }
+            }
           }
         },
         scales: {
           y: {
-            beginAtZero: true
+            beginAtZero: true,
+            ticks: {
+              callback: function(value) {
+                return value.toLocaleString();
+              }
+            }
           }
         }
       }
