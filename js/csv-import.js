@@ -89,8 +89,8 @@ function parseCSVLine(line) {
   return result;
 }
 
-// タイムアウトを60秒に延長
-async function queryWithTimeout(queryPromise, timeoutMs = 60000) {
+// タイムアウトを30秒に設定
+async function queryWithTimeout(queryPromise, timeoutMs = 30000) {
   return Promise.race([
     queryPromise,
     new Promise((_, reject) => 
@@ -99,11 +99,11 @@ async function queryWithTimeout(queryPromise, timeoutMs = 60000) {
   ]);
 }
 
-async function queryWithRetry(queryFn, maxRetries = 3, retryDelay = 1000) {
+async function queryWithRetry(queryFn, maxRetries = 2, retryDelay = 1000) {
   for (let i = 0; i < maxRetries; i++) {
     try {
       console.log(`クエリ実行 (試行 ${i + 1}/${maxRetries})`);
-      const result = await queryWithTimeout(queryFn(), 60000);
+      const result = await queryWithTimeout(queryFn(), 30000);
       console.log('クエリ成功');
       return result;
     } catch (error) {
@@ -197,21 +197,37 @@ async function processCsvFile(file) {
       console.log('下書き記事確認開始...');
       
       try {
-        const result = await queryWithRetry(() => 
-          supabase
-            .from('articles')
-            .select('id, title')
-            .eq('status', 'draft')
-            .in('title', csvTitles)
-        );
+        // タイトル数が多い場合は分割して検索
+        const BATCH_SIZE = 10; // 10件ずつ処理
+        csvDraftArticles = [];
         
-        if (result.error) {
-          console.error('Supabaseエラー:', result.error);
-          csvDraftArticles = [];
-        } else {
-          csvDraftArticles = result.data || [];
-          console.log('下書き記事数:', csvDraftArticles.length);
+        for (let i = 0; i < csvTitles.length; i += BATCH_SIZE) {
+          const batch = csvTitles.slice(i, i + BATCH_SIZE);
+          console.log(`バッチ ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(csvTitles.length / BATCH_SIZE)}: ${batch.length}件`);
+          
+          const result = await queryWithRetry(() => 
+            supabase
+              .from('articles')
+              .select('id, title')
+              .eq('status', 'draft')
+              .in('title', batch),
+            2, // 2回までリトライ
+            1000 // 1秒待機
+          );
+          
+          if (result.error) {
+            console.error('Supabaseエラー:', result.error);
+          } else {
+            csvDraftArticles.push(...(result.data || []));
+          }
+          
+          // バッチ間に少し待機
+          if (i + BATCH_SIZE < csvTitles.length) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+          }
         }
+        
+        console.log('下書き記事数:', csvDraftArticles.length);
         
       } catch (error) {
         console.error('下書き記事確認失敗:', error);
@@ -306,22 +322,34 @@ async function importCsv() {
     const uniqueTitles = [...new Set(analyticsData.map(d => d.article_title).filter(t => t))];
     const articleIdMap = {};
     
-    // 既存の記事を取得
+    // 既存の記事を取得（バッチ処理）
     console.log('既存記事取得開始...');
-    const existingResult = await queryWithRetry(() =>
-      supabase
-        .from('articles')
-        .select('id, title, status')
-        .in('title', uniqueTitles)
-    );
+    const BATCH_SIZE = 10;
     
-    if (existingResult.error) {
-      throw existingResult.error;
+    for (let i = 0; i < uniqueTitles.length; i += BATCH_SIZE) {
+      const batch = uniqueTitles.slice(i, i + BATCH_SIZE);
+      console.log(`既存記事バッチ ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(uniqueTitles.length / BATCH_SIZE)}: ${batch.length}件`);
+      
+      const existingResult = await queryWithRetry(() =>
+        supabase
+          .from('articles')
+          .select('id, title, status')
+          .in('title', batch)
+      );
+      
+      if (existingResult.error) {
+        throw existingResult.error;
+      }
+      
+      (existingResult.data || []).forEach(a => {
+        articleIdMap[a.title] = a.id;
+      });
+      
+      // バッチ間に少し待機
+      if (i + BATCH_SIZE < uniqueTitles.length) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
     }
-    
-    (existingResult.data || []).forEach(a => {
-      articleIdMap[a.title] = a.id;
-    });
     
     console.log('既存記事:', Object.keys(articleIdMap).length, '件');
     
@@ -413,7 +441,7 @@ async function importCsv() {
     
     console.log('整理後の記事数:', Object.keys(dataByArticle).length);
     
-    // 前日までの累積値を計算（シンプルな一括クエリのみ使用）
+    // 前日までの累積値を計算
     console.log('前日累積値計算開始...');
     const articleIds = Object.keys(dataByArticle);
     let previousCumulativeByArticle = {};
