@@ -14,8 +14,11 @@ const supabase = createClient(
 /**
  * note APIから全ページのデータを取得
  */
-async function fetchAllNoteStats(authToken, sessionToken, maxPages = 10) {
+async function fetchAllNoteStats(authToken, sessionToken, maxPages = 20) {
   const allContents = [];
+  let totalPV = 0;
+  let totalLikes = 0;
+  let totalComments = 0;
   
   for (let page = 1; page <= maxPages; page++) {
     const url = `https://note.com/api/v1/stats/pv?filter=all&page=${page}&sort=pv`;
@@ -41,19 +44,13 @@ async function fetchAllNoteStats(authToken, sessionToken, maxPages = 10) {
     
     console.log(`Page ${page}: ${contents.length} articles found`);
     
-    // デバッグ: 1ページ目の詳細を出力
-    if (page === 1 && contents.length > 0) {
-      console.log('=== FIRST ARTICLE ===');
-      console.log(`Title: ${contents[0].name}`);
-      console.log(`PV: ${contents[0].read_count}`);
-      console.log(`Likes: ${contents[0].like_count}`);
-      console.log(`Comments: ${contents[0].comment_count}`);
-      
-      // 合計値も出力
-      console.log('=== TOTALS FROM API ===');
+    // 1ページ目の詳細を出力
+    if (page === 1) {
+      console.log('=== API TOTALS (from response) ===');
       console.log(`Total PV: ${data.data.total_pv}`);
       console.log(`Total Likes: ${data.data.total_like}`);
       console.log(`Total Comments: ${data.data.total_comment}`);
+      console.log(`Last Page: ${data.data.last_page}`);
     }
     
     if (contents.length === 0) {
@@ -62,6 +59,18 @@ async function fetchAllNoteStats(authToken, sessionToken, maxPages = 10) {
     }
     
     allContents.push(...contents);
+    
+    // ページごとの合計を計算
+    const pagePV = contents.reduce((sum, article) => sum + (article.read_count || 0), 0);
+    const pageLikes = contents.reduce((sum, article) => sum + (article.like_count || 0), 0);
+    const pageComments = contents.reduce((sum, article) => sum + (article.comment_count || 0), 0);
+    
+    totalPV += pagePV;
+    totalLikes += pageLikes;
+    totalComments += pageComments;
+    
+    console.log(`Page ${page} totals - PV: ${pagePV}, Likes: ${pageLikes}, Comments: ${pageComments}`);
+    console.log(`Running totals - PV: ${totalPV}, Likes: ${totalLikes}, Comments: ${totalComments}`);
     
     // last_pageフラグをチェック
     if (data?.data?.last_page === true) {
@@ -73,7 +82,10 @@ async function fetchAllNoteStats(authToken, sessionToken, maxPages = 10) {
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
   
+  console.log(`=== FETCH COMPLETE ===`);
   console.log(`Total articles fetched: ${allContents.length}`);
+  console.log(`Final totals - PV: ${totalPV}, Likes: ${totalLikes}, Comments: ${totalComments}`);
+  
   return allContents;
 }
 
@@ -82,7 +94,7 @@ async function fetchAllNoteStats(authToken, sessionToken, maxPages = 10) {
  */
 async function upsertArticle(articleId, title, url) {
   try {
-    await supabase
+    const { error } = await supabase
       .from('articles')
       .upsert({
         id: articleId,
@@ -93,8 +105,10 @@ async function upsertArticle(articleId, title, url) {
       }, {
         onConflict: 'id'
       });
+    
+    if (error) throw error;
   } catch (error) {
-    console.error('Article upsert error:', error);
+    console.error(`Article upsert error for ${articleId}:`, error);
   }
 }
 
@@ -109,7 +123,7 @@ async function saveAnalytics(articles) {
 
   for (const article of articles) {
     // 正しいフィールド名を使用
-    const articleId = article.id || article.key;
+    const articleId = String(article.id || article.key);
     const title = article.name || article.title || '無題';
     const urlname = article.user?.urlname || 'unknown';
     const url = `https://note.com/${urlname}/n/${article.key}`;
@@ -118,8 +132,6 @@ async function saveAnalytics(articles) {
     const pv = article.read_count || 0;
     const likes = article.like_count || 0;
     const comments = article.comment_count || 0;
-
-    console.log(`Article: ${title}, PV: ${pv}, Likes: ${likes}, Comments: ${comments}`);
 
     // 記事マスタに登録
     await upsertArticle(articleId, title, url);
@@ -165,6 +177,7 @@ async function saveAnalytics(articles) {
   console.log(`Total PV: ${totalPV}`);
   console.log(`Total Likes: ${totalLikes}`);
   console.log(`Total Comments: ${totalComments}`);
+  console.log(`Records saved: ${records.length}`);
 
   return records.length;
 }
@@ -190,20 +203,25 @@ export default async function handler(req, res) {
 
   try {
     console.log('=== SYNC START ===');
+    console.log(`Timestamp: ${new Date().toISOString()}`);
     
     // リクエストボディからCookie情報を取得
     const { authToken, sessionToken } = req.body;
 
     if (!authToken || !sessionToken) {
+      console.error('Missing authentication tokens');
       return res.status(400).json({ 
         error: 'Cookie情報が必要です' 
       });
     }
 
+    console.log('Authentication tokens received');
+
     // noteから全ページのデータ取得
-    const articles = await fetchAllNoteStats(authToken, sessionToken, 10);
+    const articles = await fetchAllNoteStats(authToken, sessionToken, 20);
 
     if (articles.length === 0) {
+      console.log('No articles found');
       return res.status(200).json({
         success: true,
         message: 'データが取得できませんでした',
@@ -224,8 +242,8 @@ export default async function handler(req, res) {
 
   } catch (error) {
     console.error('=== SYNC ERROR ===');
-    console.error('Error:', error);
-    console.error('Stack:', error.stack);
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
     
     return res.status(500).json({
       success: false,

@@ -9,9 +9,6 @@ class NoteSyncManager {
     this.loadLastSyncTime();
   }
 
-  /**
-   * 最終同期時刻を読み込み
-   */
   loadLastSyncTime() {
     const saved = localStorage.getItem('note_last_sync_time');
     if (saved) {
@@ -19,18 +16,12 @@ class NoteSyncManager {
     }
   }
 
-  /**
-   * 最終同期時刻を保存
-   */
   saveLastSyncTime() {
     this.lastSyncTime = new Date();
     localStorage.setItem('note_last_sync_time', this.lastSyncTime.toISOString());
     this.updateSyncStatusUI();
   }
 
-  /**
-   * 同期ステータスUIを更新
-   */
   updateSyncStatusUI() {
     const statusElement = document.getElementById('last-sync-time');
     if (statusElement && this.lastSyncTime) {
@@ -55,7 +46,7 @@ class NoteSyncManager {
       const settings = window.noteSettingsManager.loadSettings();
       
       if (!settings.authToken || !settings.sessionToken) {
-        throw new Error('note API認証情報が設定されていません。⚙️ note連携設定から設定してください。');
+        throw new Error('note API認証情報が設定されていません');
       }
 
       // Vercel API Routeを呼び出し
@@ -70,12 +61,26 @@ class NoteSyncManager {
         })
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `API Error: ${response.status}`);
+      console.log('Response status:', response.status);
+      console.log('Response headers:', response.headers);
+
+      // レスポンスのテキストを取得
+      const responseText = await response.text();
+      console.log('Response text:', responseText);
+
+      // JSONとしてパース
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError);
+        console.error('Response was:', responseText);
+        throw new Error(`サーバーからの応答が不正です: ${responseText.substring(0, 100)}`);
       }
 
-      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || `API Error: ${response.status}`);
+      }
 
       if (!result.success) {
         throw new Error(result.error || '同期に失敗しました');
@@ -84,7 +89,7 @@ class NoteSyncManager {
       const now = new Date().toLocaleString('ja-JP');
       showToast(`${result.count}件のデータを保存しました（取得時刻: ${now}）`);
       this.saveLastSyncTime();
-      showToast('✅ 同期が完了しました。※noteのデータは数時間の遅延があります');
+      showToast('✅ 同期が完了しました');
 
       // グラフを更新
       if (typeof loadAnalytics === 'function') {
@@ -103,7 +108,7 @@ class NoteSyncManager {
 // グローバルインスタンス
 window.noteSyncManager = new NoteSyncManager();
 
-// グローバル関数（HTMLから呼び出し用）
+// グローバル関数
 async function syncFromNote() {
   await window.noteSyncManager.syncFromNote();
 }
