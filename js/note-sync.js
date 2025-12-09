@@ -44,13 +44,13 @@ class NoteSyncManager {
    */
   async syncFromNote() {
     if (this.isSyncing) {
-      showNotification('同期処理が既に実行中です', 'warning');
+      showToast('同期処理が既に実行中です');
       return;
     }
 
     try {
       this.isSyncing = true;
-      showNotification('noteからデータを取得中...', 'info');
+      showToast('noteからデータを取得中...');
 
       // 認証チェック
       if (!window.noteAPIClient.isAuthenticated) {
@@ -64,22 +64,22 @@ class NoteSyncManager {
         throw new Error('データが取得できませんでした');
       }
 
-      showNotification(`${allStats.length}件の記事データを取得しました`, 'success');
+      showToast(`${allStats.length}件の記事データを取得しました`);
 
       // データを整形してSupabaseに保存
       await this.saveStatsToDatabase(allStats);
 
       this.saveLastSyncTime();
-      showNotification('同期が完了しました', 'success');
+      showToast('同期が完了しました');
 
       // グラフを更新
-      if (typeof loadAnalyticsData === 'function') {
-        await loadAnalyticsData();
+      if (typeof loadAnalytics === 'function') {
+        await loadAnalytics();
       }
 
     } catch (error) {
       console.error('Sync error:', error);
-      showNotification(`同期エラー: ${error.message}`, 'error');
+      showToast(`同期エラー: ${error.message}`);
     } finally {
       this.isSyncing = false;
     }
@@ -167,7 +167,7 @@ class NoteSyncManager {
 
       if (error) throw error;
 
-      showNotification(`${records.length}件のデータを保存しました`, 'success');
+      showToast(`${records.length}件のデータを保存しました`);
     } catch (error) {
       console.error('Batch upsert error:', error);
       throw new Error('データベースへの保存に失敗しました');

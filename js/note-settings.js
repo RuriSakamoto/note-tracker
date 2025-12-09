@@ -81,61 +81,72 @@ function openNoteSettingsModal() {
   const settings = window.noteSettingsManager.loadSettings();
   
   const modal = document.createElement('div');
-  modal.className = 'modal';
+  modal.className = 'modal-overlay';
+  modal.id = 'note-settings-modal';
   modal.innerHTML = `
-    <div class="modal-content" style="max-width: 600px;">
+    <div class="modal">
       <div class="modal-header">
-        <h2>note連携設定</h2>
-        <button class="close-btn" onclick="closeModal()">&times;</button>
+        <h3 class="modal-title">note連携設定</h3>
+        <button class="modal-close" onclick="closeNoteSettingsModal()">&times;</button>
       </div>
       <div class="modal-body">
         <div class="form-group">
-          <label for="note-auth-token">note_gql_auth_token</label>
+          <label class="form-label">note_gql_auth_token</label>
           <input 
             type="text" 
             id="note-auth-token" 
-            class="form-control" 
+            class="form-input" 
             placeholder="ブラウザのCookieから取得"
             value="${settings.authToken || ''}"
           >
-          <small class="form-text">
+          <p style="font-size: 0.875rem; color: var(--gray-600); margin-top: 4px;">
             ブラウザの開発者ツールから取得してください
-            <a href="#" onclick="showCookieGuide(); return false;">取得方法を見る</a>
-          </small>
+            <a href="#" onclick="showCookieGuide(); return false;" style="color: var(--primary-color);">取得方法を見る</a>
+          </p>
         </div>
         
         <div class="form-group">
-          <label for="note-session-token">_note_session_v5</label>
+          <label class="form-label">_note_session_v5</label>
           <input 
             type="text" 
             id="note-session-token" 
-            class="form-control" 
+            class="form-input" 
             placeholder="ブラウザのCookieから取得"
             value="${settings.sessionToken || ''}"
           >
         </div>
 
-        <div class="alert alert-info">
-          <strong>注意:</strong> Cookie情報は定期的に更新が必要です（通常30日程度）
+        <div style="padding: 12px; background: #e3f2fd; border-radius: 8px; margin-top: 16px;">
+          <strong>⚠️ 注意:</strong> Cookie情報は定期的に更新が必要です（通常30日程度）
         </div>
 
         ${settings.savedAt ? `
-          <div class="form-group">
-            <small>最終保存: ${new Date(settings.savedAt).toLocaleString('ja-JP')}</small>
+          <div class="form-group" style="margin-top: 16px;">
+            <small style="color: var(--gray-600);">最終保存: ${new Date(settings.savedAt).toLocaleString('ja-JP')}</small>
           </div>
         ` : ''}
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeModal()">キャンセル</button>
+        <button class="btn btn-secondary" onclick="closeNoteSettingsModal()">キャンセル</button>
         <button class="btn btn-danger" onclick="clearNoteSettings()">設定をクリア</button>
-        <button class="btn btn-primary" onclick="testNoteConnection()">接続テスト</button>
-        <button class="btn btn-success" onclick="saveNoteSettings()">保存</button>
+        <button class="btn btn-secondary" onclick="testNoteConnection()">接続テスト</button>
+        <button class="btn btn-primary" onclick="saveNoteSettings()">保存</button>
       </div>
     </div>
   `;
   
   document.body.appendChild(modal);
   modal.style.display = 'flex';
+}
+
+/**
+ * note設定モーダルを閉じる
+ */
+function closeNoteSettingsModal() {
+  const modal = document.getElementById('note-settings-modal');
+  if (modal) {
+    modal.remove();
+  }
 }
 
 /**
@@ -146,17 +157,17 @@ async function saveNoteSettings() {
   const sessionToken = document.getElementById('note-session-token').value.trim();
 
   if (!authToken || !sessionToken) {
-    showNotification('両方のCookie情報を入力してください', 'error');
+    showToast('両方のCookie情報を入力してください');
     return;
   }
 
   const success = window.noteSettingsManager.saveSettings(authToken, sessionToken);
   
   if (success) {
-    showNotification('設定を保存しました', 'success');
-    closeModal();
+    showToast('設定を保存しました');
+    closeNoteSettingsModal();
   } else {
-    showNotification('設定の保存に失敗しました', 'error');
+    showToast('設定の保存に失敗しました');
   }
 }
 
@@ -166,8 +177,8 @@ async function saveNoteSettings() {
 function clearNoteSettings() {
   if (confirm('note連携設定をクリアしますか？')) {
     window.noteSettingsManager.clearSettings();
-    showNotification('設定をクリアしました', 'success');
-    closeModal();
+    showToast('設定をクリアしました');
+    closeNoteSettingsModal();
   }
 }
 
@@ -179,21 +190,21 @@ async function testNoteConnection() {
   const sessionToken = document.getElementById('note-session-token').value.trim();
 
   if (!authToken || !sessionToken) {
-    showNotification('両方のCookie情報を入力してください', 'error');
+    showToast('両方のCookie情報を入力してください');
     return;
   }
 
   // 一時的に認証情報を設定
   window.noteAPIClient.setAuth(authToken, sessionToken);
 
-  showNotification('接続テスト中...', 'info');
+  showToast('接続テスト中...');
 
   const result = await window.noteAPIClient.testConnection();
   
   if (result.success) {
-    showNotification('✅ 接続成功！note APIと通信できます', 'success');
+    showToast('✅ 接続成功！note APIと通信できます');
   } else {
-    showNotification(`❌ 接続失敗: ${result.message}`, 'error');
+    showToast(`❌ 接続失敗: ${result.message}`);
   }
 }
 
@@ -202,16 +213,17 @@ async function testNoteConnection() {
  */
 function showCookieGuide() {
   const guideModal = document.createElement('div');
-  guideModal.className = 'modal';
+  guideModal.className = 'modal-overlay';
+  guideModal.id = 'cookie-guide-modal';
   guideModal.innerHTML = `
-    <div class="modal-content" style="max-width: 700px;">
+    <div class="modal" style="max-width: 700px;">
       <div class="modal-header">
-        <h2>Cookie情報の取得方法</h2>
-        <button class="close-btn" onclick="closeModal()">&times;</button>
+        <h3 class="modal-title">Cookie情報の取得方法</h3>
+        <button class="modal-close" onclick="closeCookieGuide()">&times;</button>
       </div>
       <div class="modal-body" style="max-height: 500px; overflow-y: auto;">
-        <h3>Chrome / Edge の場合</h3>
-        <ol>
+        <h4>Chrome / Edge の場合</h4>
+        <ol style="line-height: 1.8;">
           <li>note.com にログインした状態でページを開く</li>
           <li>F12キーを押して開発者ツールを開く</li>
           <li>「Application」タブをクリック</li>
@@ -224,8 +236,8 @@ function showCookieGuide() {
           </li>
         </ol>
 
-        <h3>Firefox の場合</h3>
-        <ol>
+        <h4>Firefox の場合</h4>
+        <ol style="line-height: 1.8;">
           <li>note.com にログインした状態でページを開く</li>
           <li>F12キーを押して開発者ツールを開く</li>
           <li>「ストレージ」タブをクリック</li>
@@ -233,8 +245,8 @@ function showCookieGuide() {
           <li>上記と同じCookieをコピー</li>
         </ol>
 
-        <h3>Safari の場合</h3>
-        <ol>
+        <h4>Safari の場合</h4>
+        <ol style="line-height: 1.8;">
           <li>「開発」メニューを有効化（環境設定→詳細）</li>
           <li>note.com にログインした状態でページを開く</li>
           <li>「開発」→「Webインスペクタを表示」</li>
@@ -242,9 +254,9 @@ function showCookieGuide() {
           <li>上記と同じCookieをコピー</li>
         </ol>
 
-        <div class="alert alert-warning" style="margin-top: 20px;">
+        <div style="padding: 12px; background: #fff3cd; border-radius: 8px; margin-top: 20px;">
           <strong>⚠️ セキュリティ注意:</strong>
-          <ul>
+          <ul style="margin: 8px 0 0 20px;">
             <li>Cookie情報は他人に教えないでください</li>
             <li>公共のPCでは使用しないでください</li>
             <li>Cookie情報は定期的に更新されます（約30日）</li>
@@ -252,14 +264,21 @@ function showCookieGuide() {
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-primary" onclick="closeModal()">閉じる</button>
+        <button class="btn btn-primary" onclick="closeCookieGuide()">閉じる</button>
       </div>
     </div>
   `;
   
-  // 既存のモーダルを閉じる
-  closeModal();
-  
   document.body.appendChild(guideModal);
   guideModal.style.display = 'flex';
+}
+
+/**
+ * Cookieガイドモーダルを閉じる
+ */
+function closeCookieGuide() {
+  const modal = document.getElementById('cookie-guide-modal');
+  if (modal) {
+    modal.remove();
+  }
 }

@@ -1,107 +1,309 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>note アクセス解析ダッシュボード</title>
-    <link rel="stylesheet" href="css/style.css">
-    <link rel="stylesheet" href="css/modal.css">
-    <link rel="stylesheet" href="css/tabs.css">
-    <link rel="stylesheet" href="css/charts.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>note 執筆管理ツール</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <!-- CSS -->
+  <link rel="stylesheet" href="css/variables.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/modal.css">
+  
+  <!-- JavaScript -->
+  <script src="js/config.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/ui.js"></script>
+  
+  <!-- 新規追加: note API関連 -->
+  <script src="js/note-api-client.js"></script>
+  <script src="js/note-settings.js"></script>
+  <script src="js/note-sync.js"></script>
+  
+  <!-- 既存のスクリプト -->
+  <script src="js/articles.js"></script>
+  <script src="js/tasks.js"></script>
+  <script src="js/analytics.js"></script>
+  <script src="js/csv-import.js"></script>
+  <script src="js/main.js" defer></script>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>📊 note アクセス解析ダッシュボード</h1>
-        </header>
+  <header class="header">
+    <h1>📝 note 執筆管理ツール</h1>
+  </header>
 
-        <div class="tabs">
-            <button class="tab-btn active" onclick="switchTab('analytics')">アクセス解析</button>
-            <button class="tab-btn" onclick="switchTab('articles')">記事管理</button>
+  <nav class="tabs">
+    <div class="tab active" data-tab="progress">📋 執筆進捗</div>
+    <div class="tab" data-tab="analytics">📊 アクセス解析</div>
+  </nav>
+
+  <main class="main">
+    <!-- 執筆進捗タブ -->
+    <div id="progress-tab" class="tab-content active">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">記事一覧</h2>
+          <button class="btn btn-primary" onclick="openArticleModal()">
+            ＋ 新規作成
+          </button>
         </div>
 
-        <!-- アクセス解析タブ -->
-        <div id="analytics-tab" class="tab-content active">
-            <!-- データ取得セクション（修正） -->
-            <div class="card">
-                <div class="card-header">
-                    <h2 class="card-title">📥 データ取得</h2>
-                </div>
-                <div class="card-body">
-                    <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;">
-                        <!-- 新機能: note自動取得 -->
-                        <button class="btn btn-primary" onclick="syncFromNote()" title="noteから最新データを自動取得">
-                            🔄 noteから自動取得
-                        </button>
-                        <button class="btn btn-secondary" onclick="openNoteSettingsModal()" title="note API連携設定">
-                            ⚙️ note連携設定
-                        </button>
-                        
-                        <!-- 既存機能 -->
-                        <button class="btn btn-secondary" onclick="openCsvModal()">
-                            📄 CSVインポート
-                        </button>
-                        <button class="btn btn-secondary" onclick="openStatsModal()">
-                            ✏️ フォロワー・売上入力
-                        </button>
-                    </div>
-                    
-                    <!-- 同期ステータス表示 -->
-                    <div id="sync-status" style="padding: 8px; background: #f5f5f5; border-radius: 4px; font-size: 14px;">
-                        <strong>最終同期:</strong> <span id="last-sync-time">未実行</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 既存のグラフ表示部分は変更なし -->
-            <div class="card">
-                <div class="card-header">
-                    <h2 class="card-title">📈 アクセス推移</h2>
-                    <div class="date-range-selector">
-                        <label for="date-range">期間:</label>
-                        <select id="date-range" onchange="loadAnalyticsData()">
-                            <option value="7">過去7日間</option>
-                            <option value="30" selected>過去30日間</option>
-                            <option value="90">過去90日間</option>
-                            <option value="all">全期間</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <canvas id="accessChart"></canvas>
-                </div>
-            </div>
-
-            <!-- 以下、既存のコンテンツは変更なし -->
-            <!-- ... -->
+        <div class="filter-tabs">
+          <button class="filter-tab active" data-filter="all">すべて</button>
+          <button class="filter-tab" data-filter="draft">下書き</button>
+          <button class="filter-tab" data-filter="published">投稿済み</button>
+          <button class="filter-tab" data-filter="archived">アーカイブ</button>
         </div>
 
-        <!-- 記事管理タブ（既存のまま） -->
-        <div id="articles-tab" class="tab-content">
-            <!-- 既存のコンテンツ -->
+        <div id="article-list" class="article-list">
+          <div class="loading"><div class="spinner"></div></div>
         </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">ガントチャート</h2>
+          <div class="gantt-controls">
+            <button class="btn btn-secondary btn-sm gantt-view active" data-view="week">週次</button>
+            <button class="btn btn-secondary btn-sm gantt-view" data-view="month">月次</button>
+          </div>
+        </div>
+        <div class="gantt-container">
+          <div id="gantt-chart"></div>
+        </div>
+      </div>
     </div>
 
-    <!-- スクリプト読み込み（順序重要） -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    
-    <!-- 既存のスクリプト -->
-    <script src="js/config.js"></script>
-    <script src="js/api.js"></script>
-    <script src="js/utils.js"></script>
-    <script src="js/ui.js"></script>
-    
-    <!-- 新規スクリプト（既存より前に読み込む） -->
-    <script src="js/note-api-client.js"></script>
-    <script src="js/note-settings.js"></script>
-    <script src="js/note-sync.js"></script>
-    
-    <!-- 既存のスクリプト（続き） -->
-    <script src="js/analytics.js"></script>
-    <script src="js/articles.js"></script>
-    <script src="js/csv-import.js"></script>
-    <script src="js/tasks.js"></script>
-    <script src="js/main.js"></script>
+    <!-- アクセス解析タブ -->
+    <div id="analytics-tab" class="tab-content">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="total-pv">-</div>
+          <div class="stat-label">総PV</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="total-likes">-</div>
+          <div class="stat-label">総スキ</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="total-comments">-</div>
+          <div class="stat-label">総コメント</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="total-followers">-</div>
+          <div class="stat-label">フォロワー</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="total-revenue">-</div>
+          <div class="stat-label">売上</div>
+        </div>
+      </div>
+
+      <!-- データ取得セクション（修正版） -->
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">📥 データ取得</h2>
+        </div>
+        <div class="card-body">
+          <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;">
+            <!-- 新機能: note自動取得 -->
+            <button class="btn btn-primary" onclick="syncFromNote()" title="noteから最新データを自動取得">
+              🔄 noteから自動取得
+            </button>
+            <button class="btn btn-secondary" onclick="openNoteSettingsModal()" title="note API連携設定">
+              ⚙️ note連携設定
+            </button>
+            
+            <!-- 既存機能 -->
+            <button class="btn btn-secondary" onclick="openCsvModal()">
+              📄 CSVインポート
+            </button>
+            <button class="btn btn-secondary" onclick="openStatsModal()">
+              ✏️ フォロワー・売上入力
+            </button>
+          </div>
+          
+          <!-- 同期ステータス表示 -->
+          <div id="sync-status" style="padding: 8px; background: #f5f5f5; border-radius: 4px; font-size: 14px;">
+            <strong>最終同期:</strong> <span id="last-sync-time">未実行</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">推移グラフ</h2>
+          <div class="filter-tabs">
+            <button class="filter-tab active" data-chart="daily">日別</button>
+            <button class="filter-tab" data-chart="weekly">週別</button>
+            <button class="filter-tab" data-chart="monthly">月別</button>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="trend-chart"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">期間比較</h2>
+        </div>
+        <div class="period-selector">
+          <label>期間1:</label>
+          <input type="month" id="period1" class="form-input" style="width: auto;">
+          <span class="vs-text">vs</span>
+          <label>期間2:</label>
+          <input type="month" id="period2" class="form-input" style="width: auto;">
+          <button class="btn btn-primary btn-sm" onclick="comparePeriods()">比較</button>
+        </div>
+        <div class="chart-container">
+          <canvas id="compare-chart"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">記事別アクセス</h2>
+        </div>
+        <div id="article-analytics-list"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- 記事作成/編集モーダル -->
+  <div id="article-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title" id="article-modal-title">新規記事作成</h3>
+        <button class="modal-close" onclick="closeArticleModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="article-id">
+        
+        <div class="form-group">
+          <label class="form-label">タイトル</label>
+          <input type="text" id="article-title" class="form-input" placeholder="記事タイトルを入力">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">タグ（Enterで追加）</label>
+          <div class="tags-container" id="tags-container">
+            <input type="text" class="tags-input" id="tags-input" placeholder="タグを入力...">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">タスク進捗</label>
+          <div class="task-editor" id="task-editor"></div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">記事ステータス</label>
+          <select id="article-status" class="form-select">
+            <option value="draft">下書き</option>
+            <option value="published">投稿済み</option>
+            <option value="archived">アーカイブ</option>
+          </select>
+        </div>
+
+        <div class="date-row">
+          <div class="form-group">
+            <label class="form-label">下書き保存日</label>
+            <input type="date" id="draft-saved-at" class="form-input">
+          </div>
+          <div class="form-group">
+            <label class="form-label">投稿日</label>
+            <input type="date" id="published-at" class="form-input">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeArticleModal()">キャンセル</button>
+        <button class="btn btn-danger" id="delete-article-btn" onclick="deleteArticle()" style="display: none;">削除</button>
+        <button class="btn btn-primary" id="save-article-btn" onclick="saveArticle()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CSVインポートモーダル -->
+  <div id="csv-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title">CSVインポート</h3>
+        <button class="modal-close" onclick="closeCsvModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <p style="margin-bottom: 16px; color: var(--gray-600);">
+          noteダッシュボードからエクスポートしたCSVファイルをインポートします。
+        </p>
+        
+        <!-- 日付選択フィールド -->
+        <div class="form-group">
+          <label class="form-label">インポート日付</label>
+          <input type="date" id="csv-date" class="form-input" required>
+          <p style="font-size: 0.875rem; color: var(--gray-600); margin-top: 4px;">
+            この日付のデータとしてインポートされます
+          </p>
+        </div>
+        
+        <div class="file-drop" id="file-drop" onclick="document.getElementById('csv-file').click()">
+          <div class="file-drop-icon">📁</div>
+          <p>クリックまたはドラッグ&ドロップ</p>
+          <p style="font-size: 0.875rem; color: var(--gray-500);">CSV形式</p>
+        </div>
+        <input type="file" id="csv-file" accept=".csv" style="display: none;" onchange="handleCsvFile(event)">
+        
+        <div id="csv-preview" style="margin-top: 16px; display: none;">
+          <h4 style="margin-bottom: 8px;">プレビュー</h4>
+          <div id="csv-preview-content" style="max-height: 200px; overflow: auto; background: var(--gray-100); padding: 12px; border-radius: 8px; font-size: 0.875rem;"></div>
+        </div>
+
+        <div class="checkbox-group" id="update-status-group" style="display: none;">
+          <input type="checkbox" id="update-draft-status" checked>
+          <label for="update-draft-status">下書き記事を「投稿済み」に更新する</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeCsvModal()">キャンセル</button>
+        <button class="btn btn-primary" id="import-csv-btn" onclick="importCsv()" disabled>インポート</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- フォロワー・売上入力モーダル -->
+  <div id="stats-modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title">フォロワー・売上入力</h3>
+        <button class="modal-close" onclick="closeStatsModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">日付</label>
+          <input type="date" id="stats-date" class="form-input">
+        </div>
+        <div class="form-group">
+          <label class="form-label">フォロワー数</label>
+          <input type="number" id="stats-followers" class="form-input" placeholder="0">
+        </div>
+        <div class="form-group">
+          <label class="form-label">売上（円）</label>
+          <input type="number" id="stats-revenue" class="form-input" placeholder="0">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeStatsModal()">キャンセル</button>
+        <button class="btn btn-primary" id="save-stats-btn" onclick="saveStats()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
 </body>
 </html>
