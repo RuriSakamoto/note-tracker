@@ -36,20 +36,25 @@ async function fetchAllNoteStats(authToken, sessionToken, maxPages = 10) {
 
     const data = await response.json();
     
-    // デバッグ: 生のレスポンスを出力
-    if (page === 1) {
-      console.log('=== RAW API RESPONSE (Page 1) ===');
-      console.log(JSON.stringify(data, null, 2));
-      
-      if (data?.data?.contents && data.data.contents.length > 0) {
-        console.log('=== FIRST ARTICLE DATA ===');
-        console.log(JSON.stringify(data.data.contents[0], null, 2));
-      }
-    }
-    
-    const contents = data?.data?.contents || [];
+    // 正しいフィールド名: note_stats
+    const contents = data?.data?.note_stats || [];
     
     console.log(`Page ${page}: ${contents.length} articles found`);
+    
+    // デバッグ: 1ページ目の詳細を出力
+    if (page === 1 && contents.length > 0) {
+      console.log('=== FIRST ARTICLE ===');
+      console.log(`Title: ${contents[0].name}`);
+      console.log(`PV: ${contents[0].read_count}`);
+      console.log(`Likes: ${contents[0].like_count}`);
+      console.log(`Comments: ${contents[0].comment_count}`);
+      
+      // 合計値も出力
+      console.log('=== TOTALS FROM API ===');
+      console.log(`Total PV: ${data.data.total_pv}`);
+      console.log(`Total Likes: ${data.data.total_like}`);
+      console.log(`Total Comments: ${data.data.total_comment}`);
+    }
     
     if (contents.length === 0) {
       console.log(`No more data at page ${page}, stopping`);
@@ -57,6 +62,12 @@ async function fetchAllNoteStats(authToken, sessionToken, maxPages = 10) {
     }
     
     allContents.push(...contents);
+    
+    // last_pageフラグをチェック
+    if (data?.data?.last_page === true) {
+      console.log(`Last page reached at page ${page}`);
+      break;
+    }
     
     // レート制限対策: 1秒待機
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -97,24 +108,16 @@ async function saveAnalytics(articles) {
   console.log(`Processing ${articles.length} articles...`);
 
   for (const article of articles) {
+    // 正しいフィールド名を使用
     const articleId = article.id || article.key;
     const title = article.name || article.title || '無題';
-    const url = article.noteUrl || `https://note.com/${article.userUrlname}/n/${article.key}`;
+    const urlname = article.user?.urlname || 'unknown';
+    const url = `https://note.com/${urlname}/n/${article.key}`;
     
-    // デバッグ: 全てのフィールドを確認
-    console.log('=== ARTICLE FIELDS ===');
-    console.log('Available fields:', Object.keys(article));
-    console.log('readCount:', article.readCount);
-    console.log('pv:', article.pv);
-    console.log('viewCount:', article.viewCount);
-    console.log('likeCount:', article.likeCount);
-    console.log('likes:', article.likes);
-    console.log('commentCount:', article.commentCount);
-    console.log('comments:', article.comments);
-    
-    const pv = article.readCount || article.pv || article.viewCount || 0;
-    const likes = article.likeCount || article.likes || 0;
-    const comments = article.commentCount || article.comments || 0;
+    // 正しいフィールド名: read_count, like_count, comment_count
+    const pv = article.read_count || 0;
+    const likes = article.like_count || 0;
+    const comments = article.comment_count || 0;
 
     console.log(`Article: ${title}, PV: ${pv}, Likes: ${likes}, Comments: ${comments}`);
 
@@ -133,28 +136,41 @@ async function saveAnalytics(articles) {
 
   // 既存データを削除
   console.log(`Deleting existing data for ${today}...`);
-  await supabase
+  const { error: deleteError } = await supabase
     .from('article_analytics')
     .delete()
     .eq('date', today);
 
+  if (deleteError) {
+    console.error('Delete error:', deleteError);
+  }
+
   // 新しいデータを挿入
   console.log(`Inserting ${records.length} records...`);
-  const { error } = await supabase
+  const { error: insertError } = await supabase
     .from('article_analytics')
     .insert(records);
 
-  if (error) {
-    console.error('Insert error:', error);
-    throw error;
+  if (insertError) {
+    console.error('Insert error:', insertError);
+    throw insertError;
   }
 
-  console.log(`Successfully saved ${records.length} records`);
+  // 合計を計算して出力
+  const totalPV = records.reduce((sum, r) => sum + r.pv, 0);
+  const totalLikes = records.reduce((sum, r) => sum + r.likes, 0);
+  const totalComments = records.reduce((sum, r) => sum + r.comments, 0);
+  
+  console.log('=== SAVED TOTALS ===');
+  console.log(`Total PV: ${totalPV}`);
+  console.log(`Total Likes: ${totalLikes}`);
+  console.log(`Total Comments: ${totalComments}`);
+
   return records.length;
 }
 
 /**
- * メインハンドラー（必ずexport defaultする）
+ * メインハンドラー
  */
 export default async function handler(req, res) {
   // CORSヘッダー設定
