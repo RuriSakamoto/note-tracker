@@ -5,6 +5,7 @@
 let analyticsChart = null;
 let analyticsData = [];
 let dailyStats = [];
+let articlesMap = {}; // 記事ID → 記事情報のマップ
 
 // アナリティクス初期化
 async function initAnalytics() {
@@ -18,17 +19,34 @@ async function initAnalytics() {
 async function loadAnalyticsData() {
   try {
     if (typeof supabaseClient !== 'undefined' && supabaseClient) {
+      // articlesテーブルから記事情報を取得
+      const { data: articles, error: articlesError } = await supabaseClient
+        .from('articles')
+        .select('id, title, url');
+      
+      if (articlesError) {
+        console.error('articles取得エラー:', articlesError);
+      } else if (articles) {
+        // 記事IDをキーにしたマップを作成
+        articlesMap = {};
+        articles.forEach(article => {
+          articlesMap[article.id] = article;
+        });
+        console.log('articles取得成功:', articles.length, '件');
+      }
+      
       // article_analyticsテーブルからデータ取得
       const { data: analytics, error: analyticsError } = await supabaseClient
         .from('article_analytics')
         .select('*')
-        .order('read_count', { ascending: false });
+        .order('date', { ascending: false });
       
       if (analyticsError) {
         console.error('article_analytics取得エラー:', analyticsError);
       } else if (analytics) {
         analyticsData = analytics;
         localStorage.setItem('note_analytics_cache', JSON.stringify(analyticsData));
+        localStorage.setItem('note_articles_map_cache', JSON.stringify(articlesMap));
         console.log('article_analytics取得成功:', analytics.length, '件');
       }
       
@@ -50,9 +68,13 @@ async function loadAnalyticsData() {
     }
   } catch (error) {
     console.warn('Supabaseからの読み込みエラー、キャッシュを使用:', error.message);
-    const storedArticles = localStorage.getItem('note_analytics_cache');
-    if (storedArticles) {
-      analyticsData = JSON.parse(storedArticles);
+    const storedAnalytics = localStorage.getItem('note_analytics_cache');
+    if (storedAnalytics) {
+      analyticsData = JSON.parse(storedAnalytics);
+    }
+    const storedArticlesMap = localStorage.getItem('note_articles_map_cache');
+    if (storedArticlesMap) {
+      articlesMap = JSON.parse(storedArticlesMap);
     }
     const storedStats = localStorage.getItem('note_daily_stats_cache');
     if (storedStats) {
@@ -63,14 +85,17 @@ async function loadAnalyticsData() {
 
 // KPIカード更新
 function updateKPICards() {
+  // 記事ごとの最新データを集計
+  const latestByArticle = getLatestStatsByArticle();
+  
   let totalPV = 0;
   let totalLikes = 0;
   let totalComments = 0;
   
-  analyticsData.forEach(article => {
-    totalPV += article.read_count || article.pv || 0;
-    totalLikes += article.like_count || article.likes || 0;
-    totalComments += article.comment_count || article.comments || 0;
+  Object.values(latestByArticle).forEach(stat => {
+    totalPV += stat.pv || 0;
+    totalLikes += stat.likes || 0;
+    totalComments += stat.comments || 0;
   });
   
   let latestFollowers = '-';
@@ -100,6 +125,20 @@ function updateKPICards() {
   if (commentsEl) commentsEl.textContent = totalComments.toLocaleString();
   if (followersEl) followersEl.textContent = latestFollowers;
   if (revenueEl) revenueEl.textContent = latestRevenue;
+}
+
+// 記事ごとの最新統計を取得
+function getLatestStatsByArticle() {
+  const latestByArticle = {};
+  
+  // 日付でソート済みなので、最初に出てきたものが最新
+  analyticsData.forEach(stat => {
+    if (!latestByArticle[stat.article_id]) {
+      latestByArticle[stat.article_id] = stat;
+    }
+  });
+  
+  return latestByArticle;
 }
 
 // チャート更新
@@ -153,16 +192,15 @@ function updateChart(period = 'daily') {
 function prepareChartData(period) {
   const aggregated = {};
   
-  analyticsData.forEach(article => {
-    const recordedAt = article.recorded_at || article.updated_at || article.created_at;
-    const dateStr = recordedAt ? recordedAt.split('T')[0] : new Date().toISOString().split('T')[0];
+  analyticsData.forEach(stat => {
+    const dateStr = stat.date;
     const key = getAggregationKey(dateStr, period);
     
     if (!aggregated[key]) {
       aggregated[key] = { pv: 0, likes: 0 };
     }
-    aggregated[key].pv += article.read_count || article.pv || 0;
-    aggregated[key].likes += article.like_count || article.likes || 0;
+    aggregated[key].pv += stat.pv || 0;
+    aggregated[key].likes += stat.likes || 0;
   });
   
   const sortedKeys = Object.keys(aggregated).sort();
@@ -190,7 +228,7 @@ function getAggregationKey(dateStr, period) {
     case 'monthly':
       return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
     default:
-      return dateStr.split('T')[0];
+      return dateStr;
   }
 }
 
@@ -219,18 +257,57 @@ function updateArticleStatsTable() {
   if (emptyState) emptyState.style.display = 'none';
   if (table) table.style.display = 'table';
   
-  const articleStats = analyticsData.map(article => {
+  // 記事ごとにデータを集約
+  const statsByArticle = {};
+  
+  analyticsData.forEach(stat => {
+    const articleId = stat.article_id;
+    if (!statsByArticle[articleId]) {
+      statsByArticle[articleId] = {
+        history: [],
+        latest: null
+      };
+    }
+    statsByArticle[articleId].history.push(stat);
+  });
+  
+  // 各記事の最新値と前日比を計算
+  const articleStats = Object.keys(statsByArticle).map(articleId => {
+    const articleInfo = articlesMap[articleId] || {};
+    const history = statsByArticle[articleId].history.sort((a, b) => 
+      new Date(b.date) - new Date(a.date)
+    );
+    
+    const latest = history[0];
+    const previous = history[1];
+    
+    // 前日比計算
+    let trend = 'flat';
+    let trendValue = 0;
+    
+    if (previous && previous.pv > 0) {
+      const diff = (latest.pv || 0) - (previous.pv || 0);
+      trendValue = Math.round((diff / previous.pv) * 100);
+      
+      if (trendValue > 5) {
+        trend = 'up';
+      } else if (trendValue < -5) {
+        trend = 'down';
+      }
+    }
+    
     return {
-      title: article.title || article.name || '無題',
-      url: article.note_url || article.url || '#',
-      pv: article.read_count || article.pv || 0,
-      likes: article.like_count || article.likes || 0,
-      comments: article.comment_count || article.comments || 0,
-      trend: 'flat',
-      trendValue: 0
+      title: articleInfo.title || '無題',
+      url: articleInfo.url || '#',
+      pv: latest.pv || 0,
+      likes: latest.likes || 0,
+      comments: latest.comments || 0,
+      trend,
+      trendValue
     };
   });
   
+  // PV順でソート
   articleStats.sort((a, b) => b.pv - a.pv);
   
   tbody.innerHTML = articleStats.map(article => {
@@ -301,15 +378,12 @@ function aggregateByPeriod(startDate, endDate) {
   
   let pv = 0, likes = 0, comments = 0;
   
-  analyticsData.forEach(article => {
-    const recordedAt = article.recorded_at || article.updated_at || article.created_at;
-    if (recordedAt) {
-      const date = new Date(recordedAt);
-      if (date >= start && date <= end) {
-        pv += article.read_count || article.pv || 0;
-        likes += article.like_count || article.likes || 0;
-        comments += article.comment_count || article.comments || 0;
-      }
+  analyticsData.forEach(stat => {
+    const date = new Date(stat.date);
+    if (date >= start && date <= end) {
+      pv += stat.pv || 0;
+      likes += stat.likes || 0;
+      comments += stat.comments || 0;
     }
   });
   
