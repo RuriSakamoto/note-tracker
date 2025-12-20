@@ -74,6 +74,12 @@ async function syncFromNote() {
   const authToken = localStorage.getItem('note_auth_token');
   const session = localStorage.getItem('note_session');
   
+  // デバッグ用ログ
+  console.log('認証情報確認:', {
+    authToken: authToken ? '設定済み' : '未設定',
+    session: session ? '設定済み' : '未設定'
+  });
+  
   if (!authToken || !session) {
     showToast('先にnote連携設定で認証情報を設定してください');
     openNoteSettingsModal();
@@ -89,17 +95,15 @@ async function syncFromNote() {
   showToast('noteからデータを取得中...');
   
   try {
-    // note-sync.jsのsyncNoteStats関数を呼び出し
     if (typeof syncNoteStats === 'function') {
       await syncNoteStats();
     } else {
-      // フォールバック: 直接API呼び出し
       await fetchNoteStatsDirectly();
     }
     
     localStorage.setItem('note_last_sync', new Date().toISOString());
     updateLastSyncTime();
-    await initAnalytics(); // データ再読み込み
+    await initAnalytics();
     showToast('同期が完了しました');
   } catch (error) {
     console.error('同期エラー:', error);
@@ -112,34 +116,46 @@ async function syncFromNote() {
   }
 }
 
-// 直接API呼び出し（フォールバック用）
+// 直接API呼び出し
 async function fetchNoteStatsDirectly() {
   const authToken = localStorage.getItem('note_auth_token');
   const session = localStorage.getItem('note_session');
+  
+  // デバッグ用ログ
+  console.log('API呼び出し準備:', {
+    authToken: authToken ? authToken.substring(0, 20) + '...' : 'null',
+    session: session ? session.substring(0, 20) + '...' : 'null'
+  });
+  
+  const requestBody = {
+    cookies: {
+      note_gql_auth_token: authToken,
+      _note_session_v5: session
+    }
+  };
+  
+  console.log('リクエストボディ:', JSON.stringify(requestBody, null, 2));
   
   const response = await fetch('/api/sync-note', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
-      cookies: {
-        note_gql_auth_token: authToken,
-        _note_session_v5: session
-      }
-    })
+    body: JSON.stringify(requestBody)
   });
   
+  const responseData = await response.json();
+  
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error || `API Error: ${response.status}`);
+    console.error('APIエラーレスポンス:', responseData);
+    throw new Error(responseData.error || `API Error: ${response.status}`);
   }
   
-  const result = await response.json();
+  console.log('API成功レスポンス:', responseData);
   
-  if (result.data) {
-    localStorage.setItem('note_analytics_cache', JSON.stringify(result.data));
+  if (responseData.data) {
+    localStorage.setItem('note_analytics_cache', JSON.stringify(responseData.data));
   }
   
-  return result;
+  return responseData;
 }
