@@ -2,9 +2,10 @@
 const SUPABASE_URL = 'https://vjgtoedqyxtumadjjixr.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZqZ3RvZWRxeXh0dW1hZGpqaXhyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ4MTQ2OTMsImV4cCI6MjA4MDM5MDY5M30.CLom_qAan2Av94VBr4qUnPTKd5iUQwcSPnqRYkkkak4';
 
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// Supabaseクライアント（supabaseClientという名前で作成）
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// タスク定義
+// タスク定義（削除予定だが互換性のため残す）
 const TASKS = [
   { type: 'planning', name: '企画', order: 1, required: true },
   { type: 'writing', name: '執筆', order: 2, required: true },

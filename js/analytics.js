@@ -17,10 +17,10 @@ async function initAnalytics() {
 // データ読み込み（Supabase + ローカルキャッシュ）
 async function loadAnalyticsData() {
   try {
-    // Supabaseクライアントが利用可能か確認（config.jsで定義）
-    if (typeof supabase !== 'undefined' && supabase) {
+    // supabaseClient（config.jsで定義）が利用可能か確認
+    if (typeof supabaseClient !== 'undefined' && supabaseClient) {
       // 記事別アクセスデータ取得
-      const { data: articles, error: articlesError } = await supabase
+      const { data: articles, error: articlesError } = await supabaseClient
         .from('note_articles')
         .select('*')
         .order('read_count', { ascending: false });
@@ -31,7 +31,7 @@ async function loadAnalyticsData() {
       }
       
       // 日次統計データ取得（フォロワー・売上）
-      const { data: stats, error: statsError } = await supabase
+      const { data: stats, error: statsError } = await supabaseClient
         .from('daily_stats')
         .select('*')
         .order('date', { ascending: false });
@@ -63,14 +63,12 @@ function updateKPICards() {
   let totalLikes = 0;
   let totalComments = 0;
   
-  // 記事データの集計（最新の値を使用）
   analyticsData.forEach(article => {
     totalPV += article.read_count || article.pv || 0;
     totalLikes += article.like_count || article.likes || 0;
     totalComments += article.comment_count || article.comments || 0;
   });
   
-  // フォロワー・売上の最新値
   let latestFollowers = '-';
   let latestRevenue = '-';
   
@@ -105,7 +103,6 @@ function updateChart(period = 'daily') {
   const ctx = document.getElementById('analytics-chart');
   if (!ctx) return;
   
-  // 既存チャートを破棄
   if (analyticsChart) {
     analyticsChart.destroy();
   }
@@ -139,14 +136,10 @@ function updateChart(period = 'daily') {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: {
-          position: 'top'
-        }
+        legend: { position: 'top' }
       },
       scales: {
-        y: {
-          beginAtZero: true
-        }
+        y: { beginAtZero: true }
       }
     }
   });
@@ -160,7 +153,6 @@ function prepareChartData(period) {
     const history = article.stats_history || article.history || [];
     
     if (history.length === 0) {
-      // 履歴がない場合は現在の値を使用
       const today = new Date().toISOString().split('T')[0];
       const key = getAggregationKey(today, period);
       if (!aggregated[key]) {
@@ -185,14 +177,9 @@ function prepareChartData(period) {
   
   const sortedKeys = Object.keys(aggregated).sort();
   
-  // データがない場合のフォールバック
   if (sortedKeys.length === 0) {
     const today = new Date().toISOString().split('T')[0];
-    return {
-      labels: [today],
-      pv: [0],
-      likes: [0]
-    };
+    return { labels: [today], pv: [0], likes: [0] };
   }
   
   return {
@@ -202,7 +189,6 @@ function prepareChartData(period) {
   };
 }
 
-// 集計キー取得
 function getAggregationKey(dateStr, period) {
   const date = new Date(dateStr);
   
@@ -213,12 +199,11 @@ function getAggregationKey(dateStr, period) {
       return weekStart.toISOString().split('T')[0];
     case 'monthly':
       return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-    default: // daily
+    default:
       return dateStr.split('T')[0];
   }
 }
 
-// チャートラベルフォーマット
 function formatChartLabel(key, period) {
   if (period === 'monthly') {
     const [year, month] = key.split('-');
@@ -244,7 +229,6 @@ function updateArticleStatsTable() {
   if (emptyState) emptyState.style.display = 'none';
   if (table) table.style.display = 'table';
   
-  // 記事ごとの最新データと前日比を計算
   const articleStats = analyticsData.map(article => {
     const history = article.stats_history || article.history || [];
     
@@ -252,7 +236,6 @@ function updateArticleStatsTable() {
     const currentLikes = article.like_count || article.likes || 0;
     const currentComments = article.comment_count || article.comments || 0;
     
-    // 前日比計算
     let trend = 'flat';
     let trendValue = 0;
     
@@ -290,10 +273,8 @@ function updateArticleStatsTable() {
     };
   });
   
-  // PV順でソート
   articleStats.sort((a, b) => b.pv - a.pv);
   
-  // テーブル生成
   tbody.innerHTML = articleStats.map(article => {
     const trendIcon = getTrendIcon(article.trend, article.trendValue);
     const titleHtml = article.url !== '#' 
@@ -312,7 +293,6 @@ function updateArticleStatsTable() {
   }).join('');
 }
 
-// 推移アイコン生成
 function getTrendIcon(trend, value) {
   switch (trend) {
     case 'up':
@@ -324,7 +304,6 @@ function getTrendIcon(trend, value) {
   }
 }
 
-// HTMLエスケープ
 function escapeHtml(text) {
   if (!text) return '';
   const div = document.createElement('div');
@@ -357,7 +336,6 @@ function comparePeriods() {
   `;
 }
 
-// 期間集計
 function aggregateByPeriod(startDate, endDate) {
   const start = new Date(startDate);
   const end = new Date(endDate);
@@ -381,7 +359,6 @@ function aggregateByPeriod(startDate, endDate) {
   return { pv, likes, comments };
 }
 
-// 比較アイテム生成
 function createComparisonItem(label, value1, value2) {
   const diff = value2 - value1;
   const percent = value1 > 0 ? Math.round((diff / value1) * 100) : 0;
@@ -420,7 +397,6 @@ function openStatsModal() {
   document.getElementById('stats-followers').value = '';
   document.getElementById('stats-revenue').value = '';
   
-  // 直近のデータがあればプレースホルダーに表示
   if (dailyStats.length > 0) {
     const sortedStats = [...dailyStats].sort((a, b) => 
       new Date(b.date || b.recorded_at) - new Date(a.date || a.recorded_at)
@@ -466,16 +442,15 @@ async function saveStats() {
       revenue: revenue ? parseInt(revenue, 10) : null
     };
     
-    // Supabaseに保存（config.jsで定義されたsupabaseを使用）
-    if (typeof supabase !== 'undefined' && supabase) {
-      const { error } = await supabase
+    // supabaseClientを使用（config.jsで定義）
+    if (typeof supabaseClient !== 'undefined' && supabaseClient) {
+      const { error } = await supabaseClient
         .from('daily_stats')
         .upsert(data, { onConflict: 'date' });
       
       if (error) throw error;
     }
     
-    // ローカルキャッシュも更新
     const existingIndex = dailyStats.findIndex(s => 
       (s.date || s.recorded_at || '').split('T')[0] === date
     );

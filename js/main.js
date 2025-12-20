@@ -11,7 +11,7 @@ async function initApp() {
   console.log('note アクセス解析ツール 初期化開始');
   
   try {
-    // Supabase確認（config.jsで既に初期化済み）
+    // Supabase確認
     checkSupabase();
     
     // note設定の読み込み
@@ -33,11 +33,9 @@ async function initApp() {
   }
 }
 
-// Supabase確認（config.jsで既に初期化済み）
+// Supabase確認
 function checkSupabase() {
-  if (typeof supabase !== 'undefined' && supabase) {
-    // config.jsで作成されたsupabaseクライアントをwindow.supabaseClientにも設定
-    window.supabaseClient = supabase;
+  if (typeof supabaseClient !== 'undefined' && supabaseClient) {
     console.log('Supabaseクライアント確認完了');
   } else {
     console.warn('Supabaseクライアントが見つかりません。ローカルモードで動作します。');
@@ -119,7 +117,6 @@ async function fetchNoteStatsDirectly() {
   const authToken = localStorage.getItem('note_auth_token');
   const session = localStorage.getItem('note_session');
   
-  // APIが期待する形式に合わせる
   const response = await fetch('/api/sync-note', {
     method: 'POST',
     headers: {
@@ -140,7 +137,6 @@ async function fetchNoteStatsDirectly() {
   
   const result = await response.json();
   
-  // 取得したデータをローカルキャッシュに保存
   if (result.data) {
     localStorage.setItem('note_analytics_cache', JSON.stringify(result.data));
   }
