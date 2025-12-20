@@ -107,13 +107,16 @@ function updateKPICards() {
   let totalLikes = 0;
   let totalComments = 0;
   
-  // overall_statsから全期間の合計を計算
+  // overall_statsから最新の全体統計を取得（累計値）
   if (overallStats.length > 0) {
-    overallStats.forEach(stat => {
-      totalPV += stat.total_pv || 0;
-      totalLikes += stat.total_likes || 0;
-      totalComments += stat.total_comments || 0;
-    });
+    // 日付降順でソートして最新を取得
+    const sortedStats = [...overallStats].sort((a, b) => 
+      new Date(b.date) - new Date(a.date)
+    );
+    const latestOverall = sortedStats[0];
+    totalPV = latestOverall.total_pv || 0;
+    totalLikes = latestOverall.total_likes || 0;
+    totalComments = latestOverall.total_comments || 0;
   }
   
   // フォロワー・売上の最新値
@@ -193,7 +196,7 @@ function updateChart(period = 'daily') {
   });
 }
 
-// チャートデータ準備（overall_statsを使用）- 累計表示版
+// チャートデータ準備（overall_statsを使用）- 累計値をそのまま表示
 function prepareChartData(period) {
   // 日付順にソート（昇順）
   const sortedStats = [...overallStats].sort((a, b) => 
@@ -201,25 +204,15 @@ function prepareChartData(period) {
   );
   
   const aggregated = {};
-  let cumulativePV = 0;
-  let cumulativeLikes = 0;
   
-  // 日ごとの値を累計していく
   sortedStats.forEach(stat => {
     const dateStr = stat.date;
     const key = getAggregationKey(dateStr, period);
     
-    const dailyPV = stat.total_pv || 0;
-    const dailyLikes = stat.total_likes || 0;
-    
-    // 累計値を加算
-    cumulativePV += dailyPV;
-    cumulativeLikes += dailyLikes;
-    
-    // 同じ期間の場合は上書き（最新の累計値を使用）
+    // 累計値をそのまま使用（同じ期間は最新で上書き）
     aggregated[key] = {
-      pv: cumulativePV,
-      likes: cumulativeLikes
+      pv: stat.total_pv || 0,
+      likes: stat.total_likes || 0
     };
   });
   
@@ -412,17 +405,20 @@ function aggregateByPeriod(startDate, endDate) {
   const end = new Date(endDate);
   end.setHours(23, 59, 59, 999);
   
-  // 期間内のoverall_statsを合計
+  // 期間内の最新のoverall_statsを取得（累計値）
   let pv = 0, likes = 0, comments = 0;
   
-  overallStats.forEach(stat => {
+  const statsInRange = overallStats.filter(stat => {
     const date = new Date(stat.date);
-    if (date >= start && date <= end) {
-      pv += stat.total_pv || 0;
-      likes += stat.total_likes || 0;
-      comments += stat.total_comments || 0;
-    }
-  });
+    return date >= start && date <= end;
+  }).sort((a, b) => new Date(b.date) - new Date(a.date));
+  
+  if (statsInRange.length > 0) {
+    const latest = statsInRange[0];
+    pv = latest.total_pv || 0;
+    likes = latest.total_likes || 0;
+    comments = latest.total_comments || 0;
+  }
   
   return { pv, likes, comments };
 }
