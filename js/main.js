@@ -11,8 +11,8 @@ async function initApp() {
   console.log('note アクセス解析ツール 初期化開始');
   
   try {
-    // Supabase初期化
-    initSupabase();
+    // Supabase初期化（API経由で設定取得）
+    await initSupabase();
     
     // note設定の読み込み
     loadNoteSettings();
@@ -33,28 +33,39 @@ async function initApp() {
   }
 }
 
-// Supabase初期化
-function initSupabase() {
+// Supabase初期化（API経由で設定取得）
+async function initSupabase() {
   // 既にSupabaseクライアントが存在する場合はスキップ
   if (typeof window.supabaseClient !== 'undefined' && window.supabaseClient) {
     return;
   }
   
-  // NoteTrackerConfigから設定を取得
-  const config = typeof NoteTrackerConfig !== 'undefined' ? NoteTrackerConfig : null;
-  
-  if (!config || !config.supabase || !config.supabase.url || !config.supabase.anonKey) {
-    console.warn('Supabase設定が見つかりません。ローカルモードで動作します。');
-    return;
-  }
-  
-  // Supabaseクライアント作成
-  if (typeof supabase !== 'undefined' && typeof supabase.createClient === 'function') {
-    window.supabaseClient = supabase.createClient(
-      config.supabase.url,
-      config.supabase.anonKey
-    );
-    console.log('Supabaseクライアント初期化完了');
+  try {
+    // APIから設定を取得
+    const response = await fetch('/api/config');
+    if (!response.ok) {
+      throw new Error('設定の取得に失敗しました');
+    }
+    
+    const config = await response.json();
+    
+    if (!config.supabase || !config.supabase.url || !config.supabase.anonKey) {
+      console.warn('Supabase設定が不完全です。ローカルモードで動作します。');
+      return;
+    }
+    
+    // Supabaseクライアント作成
+    if (typeof supabase !== 'undefined' && typeof supabase.createClient === 'function') {
+      window.supabaseClient = supabase.createClient(
+        config.supabase.url,
+        config.supabase.anonKey
+      );
+      console.log('Supabaseクライアント初期化完了');
+    } else {
+      console.warn('Supabase SDKが読み込まれていません');
+    }
+  } catch (error) {
+    console.warn('Supabase初期化をスキップ:', error.message);
   }
 }
 
