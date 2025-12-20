@@ -20,7 +20,6 @@ export default async function handler(req, res) {
 
   console.log('=== SYNC START ===');
   
-  // bodyが文字列の場合はパース
   let body = req.body;
   if (typeof req.body === 'string') {
     try {
@@ -38,46 +37,89 @@ export default async function handler(req, res) {
   }
 
   try {
-    // noteのダッシュボードAPIを呼び出し（新しいエンドポイント）
-    const noteResponse = await fetch('https://note.com/api/v1/stats/pv?filter=all&page=1&sort=pv', {
-      headers: {
-        'Cookie': `note_gql_auth_token=${cookies.note_gql_auth_token}; _note_session_v5=${cookies._note_session_v5}`,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'application/json',
-        'Referer': 'https://note.com/dashboard/stats'
-      }
-    });
+    const headers = {
+      'Cookie': `note_gql_auth_token=${cookies.note_gql_auth_token}; _note_session_v5=${cookies._note_session_v5}`,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      'Accept': 'application/json',
+      'Referer': 'https://note.com/dashboard/stats'
+    };
 
-    console.log('note API status:', noteResponse.status);
+    // 全ページの記事を取得
+    let allArticles = [];
+    let page = 1;
+    let hasMore = true;
+    let totalPv = 0;
+    let totalLike = 0;
+    let totalComment = 0;
 
-    if (!noteResponse.ok) {
-      const errorText = await noteResponse.text();
-      console.error('note API error:', errorText);
-      return res.status(noteResponse.status).json({ 
-        error: 'note APIエラー',
-        details: errorText 
+    while (hasMore) {
+      const noteResponse = await fetch(`https://note.com/api/v1/stats/pv?filter=all&page=${page}&sort=pv`, {
+        headers
       });
+
+      console.log(`note API page ${page} status:`, noteResponse.status);
+
+      if (!noteResponse.ok) {
+        const errorText = await noteResponse.text();
+        console.error('note API error:', errorText);
+        return res.status(noteResponse.status).json({ 
+          error: 'note APIエラー',
+          details: errorText 
+        });
+      }
+
+      const noteData = await noteResponse.json();
+      const articles = noteData?.data?.note_stats || [];
+      
+      // 1ページ目で全体統計を取得
+      if (page === 1) {
+        totalPv = noteData?.data?.total_pv || 0;
+        totalLike = noteData?.data?.total_like || 0;
+        totalComment = noteData?.data?.total_comment || 0;
+        console.log('Total stats:', { totalPv, totalLike, totalComment });
+      }
+
+      allArticles = allArticles.concat(articles);
+      hasMore = noteData?.data?.last_page === false;
+      page++;
+
+      // 安全のため最大10ページまで
+      if (page > 10) {
+        console.log('Max pages reached');
+        break;
+      }
     }
 
-    const noteData = await noteResponse.json();
-    console.log('note API response:', JSON.stringify(noteData).substring(0, 500));
-
-    // データ構造を確認してパース
-    const articles = noteData?.data?.contents || noteData?.data?.note_stats || noteData?.contents || [];
-    console.log('Articles count:', articles.length);
+    console.log('Total articles fetched:', allArticles.length);
 
     const today = new Date().toISOString().split('T')[0];
 
-    for (const article of articles) {
-      // 記事IDとURLを取得（データ構造に応じて調整）
-      const articleId = article.key || article.id || article.note_id;
+    // 全体統計をoverall_statsテーブルに保存
+    const { error: overallError } = await supabase
+      .from('overall_stats')
+      .upsert({
+        date: today,
+        total_pv: totalPv,
+        total_likes: totalLike,
+        total_comments: totalComment
+      }, { onConflict: 'date' });
+
+    if (overallError) {
+      console.error('Overall stats upsert error:', overallError);
+    } else {
+      console.log('Overall stats saved:', { totalPv, totalLike, totalComment });
+    }
+
+    // 各記事のデータを保存
+    for (const article of allArticles) {
+      const articleId = article.key || article.id;
       const articleTitle = article.name || article.title;
-      const articleUrl = article.note_url 
-        ? `https://note.com${article.note_url}` 
-        : (article.url || '');
+      const userUrlname = article.user?.urlname || '';
+      const articleUrl = userUrlname 
+        ? `https://note.com/${userUrlname}/n/${articleId}`
+        : '';
 
       if (!articleId) {
-        console.log('Skipping article without ID:', article);
         continue;
       }
 
@@ -101,9 +143,9 @@ export default async function handler(req, res) {
         .upsert({
           article_id: articleId,
           date: today,
-          pv: article.read_count || article.pv || 0,
-          likes: article.like_count || article.likes || 0,
-          comments: article.comment_count || article.comments || 0
+          pv: article.read_count || 0,
+          likes: article.like_count || 0,
+          comments: article.comment_count || 0
         }, { onConflict: 'article_id,date' });
 
       if (analyticsError) {
@@ -115,8 +157,13 @@ export default async function handler(req, res) {
     
     return res.status(200).json({ 
       success: true, 
-      message: `${articles.length}件の記事を同期しました`,
-      count: articles.length
+      message: `${allArticles.length}件の記事を同期しました`,
+      count: allArticles.length,
+      stats: {
+        total_pv: totalPv,
+        total_likes: totalLike,
+        total_comments: totalComment
+      }
     });
 
   } catch (error) {

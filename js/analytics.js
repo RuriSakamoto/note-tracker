@@ -5,6 +5,7 @@
 let analyticsChart = null;
 let analyticsData = [];
 let dailyStats = [];
+let overallStats = [];
 let articlesMap = {};
 
 // アナリティクス初期化
@@ -49,6 +50,20 @@ async function loadAnalyticsData() {
         console.log('article_analytics取得成功:', analytics.length, '件');
       }
       
+      // overall_statsテーブルからデータ取得
+      const { data: overall, error: overallError } = await supabaseClient
+        .from('overall_stats')
+        .select('*')
+        .order('date', { ascending: false });
+      
+      if (overallError) {
+        console.error('overall_stats取得エラー:', overallError);
+      } else if (overall) {
+        overallStats = overall;
+        localStorage.setItem('note_overall_stats_cache', JSON.stringify(overallStats));
+        console.log('overall_stats取得成功:', overall.length, '件');
+      }
+      
       // daily_statsテーブルからデータ取得
       const { data: stats, error: statsError } = await supabaseClient
         .from('daily_stats')
@@ -75,6 +90,10 @@ async function loadAnalyticsData() {
     if (storedArticlesMap) {
       articlesMap = JSON.parse(storedArticlesMap);
     }
+    const storedOverall = localStorage.getItem('note_overall_stats_cache');
+    if (storedOverall) {
+      overallStats = JSON.parse(storedOverall);
+    }
     const storedStats = localStorage.getItem('note_daily_stats_cache');
     if (storedStats) {
       dailyStats = JSON.parse(storedStats);
@@ -82,35 +101,21 @@ async function loadAnalyticsData() {
   }
 }
 
-// 記事ごとの最新統計を取得
-function getLatestStatsByArticle() {
-  const latestByArticle = {};
-  
-  // 日付降順でソート済みなので、最初に出てきたものが最新
-  analyticsData.forEach(stat => {
-    if (!latestByArticle[stat.article_id]) {
-      latestByArticle[stat.article_id] = stat;
-    }
-  });
-  
-  return latestByArticle;
-}
-
 // KPIカード更新
 function updateKPICards() {
-  // 各記事の最新データのみを集計
-  const latestByArticle = getLatestStatsByArticle();
-  
   let totalPV = 0;
   let totalLikes = 0;
   let totalComments = 0;
   
-  Object.values(latestByArticle).forEach(stat => {
-    totalPV += stat.pv || 0;
-    totalLikes += stat.likes || 0;
-    totalComments += stat.comments || 0;
-  });
+  // overall_statsから最新の全体統計を取得
+  if (overallStats.length > 0) {
+    const latestOverall = overallStats[0]; // 日付降順なので最初が最新
+    totalPV = latestOverall.total_pv || 0;
+    totalLikes = latestOverall.total_likes || 0;
+    totalComments = latestOverall.total_comments || 0;
+  }
   
+  // フォロワー・売上の最新値
   let latestFollowers = '-';
   let latestRevenue = '-';
   
@@ -187,20 +192,24 @@ function updateChart(period = 'daily') {
   });
 }
 
-// チャートデータ準備
+// チャートデータ準備（overall_statsを使用）
 function prepareChartData(period) {
   const aggregated = {};
   
-  // 日付ごとに全記事のPV/スキを合計
-  analyticsData.forEach(stat => {
+  // overall_statsから日付ごとの全体PV/スキを取得
+  overallStats.forEach(stat => {
     const dateStr = stat.date;
     const key = getAggregationKey(dateStr, period);
     
     if (!aggregated[key]) {
       aggregated[key] = { pv: 0, likes: 0 };
     }
-    aggregated[key].pv += stat.pv || 0;
-    aggregated[key].likes += stat.likes || 0;
+    // 同じ期間に複数データがある場合は最新を使用
+    if (!aggregated[key].date || stat.date > aggregated[key].date) {
+      aggregated[key].pv = stat.total_pv || 0;
+      aggregated[key].likes = stat.total_likes || 0;
+      aggregated[key].date = stat.date;
+    }
   });
   
   const sortedKeys = Object.keys(aggregated).sort();
@@ -373,34 +382,19 @@ function aggregateByPeriod(startDate, endDate) {
   const end = new Date(endDate);
   end.setHours(23, 59, 59, 999);
   
-  // 期間内の各日付で、各記事の最新データを取得して合計
-  const dateRange = {};
-  
-  analyticsData.forEach(stat => {
-    const date = new Date(stat.date);
-    if (date >= start && date <= end) {
-      const dateKey = stat.date;
-      if (!dateRange[dateKey]) {
-        dateRange[dateKey] = {};
-      }
-      // 同じ日付・同じ記事は1回だけカウント
-      if (!dateRange[dateKey][stat.article_id]) {
-        dateRange[dateKey][stat.article_id] = stat;
-      }
-    }
-  });
-  
+  // 期間内の最新のoverall_statsを取得
   let pv = 0, likes = 0, comments = 0;
   
-  // 最新の日付のデータのみを使用
-  const dates = Object.keys(dateRange).sort().reverse();
-  if (dates.length > 0) {
-    const latestDate = dates[0];
-    Object.values(dateRange[latestDate]).forEach(stat => {
-      pv += stat.pv || 0;
-      likes += stat.likes || 0;
-      comments += stat.comments || 0;
-    });
+  const statsInRange = overallStats.filter(stat => {
+    const date = new Date(stat.date);
+    return date >= start && date <= end;
+  }).sort((a, b) => new Date(b.date) - new Date(a.date));
+  
+  if (statsInRange.length > 0) {
+    const latest = statsInRange[0];
+    pv = latest.total_pv || 0;
+    likes = latest.total_likes || 0;
+    comments = latest.total_comments || 0;
   }
   
   return { pv, likes, comments };
