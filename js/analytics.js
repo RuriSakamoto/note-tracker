@@ -17,35 +17,39 @@ async function initAnalytics() {
 // データ読み込み（Supabase + ローカルキャッシュ）
 async function loadAnalyticsData() {
   try {
-    // supabaseClient（config.jsで定義）が利用可能か確認
     if (typeof supabaseClient !== 'undefined' && supabaseClient) {
-      // 記事別アクセスデータ取得
+      // note_statsテーブルからデータ取得
       const { data: articles, error: articlesError } = await supabaseClient
-        .from('note_articles')
+        .from('note_stats')
         .select('*')
         .order('read_count', { ascending: false });
       
-      if (!articlesError && articles) {
+      if (articlesError) {
+        console.error('note_stats取得エラー:', articlesError);
+      } else if (articles) {
         analyticsData = articles;
         localStorage.setItem('note_analytics_cache', JSON.stringify(analyticsData));
+        console.log('note_stats取得成功:', articles.length, '件');
       }
       
-      // 日次統計データ取得（フォロワー・売上）
+      // daily_statsテーブルからデータ取得
       const { data: stats, error: statsError } = await supabaseClient
         .from('daily_stats')
         .select('*')
         .order('date', { ascending: false });
       
-      if (!statsError && stats) {
+      if (statsError) {
+        console.warn('daily_stats取得エラー（テーブル未作成の可能性）:', statsError.message);
+      } else if (stats) {
         dailyStats = stats;
         localStorage.setItem('note_daily_stats_cache', JSON.stringify(dailyStats));
+        console.log('daily_stats取得成功:', stats.length, '件');
       }
     } else {
       throw new Error('Supabase not initialized');
     }
   } catch (error) {
-    console.warn('Supabaseからの読み込みをスキップ、キャッシュを使用:', error.message);
-    // ローカルストレージからフォールバック
+    console.warn('Supabaseからの読み込みエラー、キャッシュを使用:', error.message);
     const storedArticles = localStorage.getItem('note_analytics_cache');
     if (storedArticles) {
       analyticsData = JSON.parse(storedArticles);
@@ -64,9 +68,9 @@ function updateKPICards() {
   let totalComments = 0;
   
   analyticsData.forEach(article => {
-    totalPV += article.read_count || article.pv || 0;
-    totalLikes += article.like_count || article.likes || 0;
-    totalComments += article.comment_count || article.comments || 0;
+    totalPV += article.read_count || 0;
+    totalLikes += article.like_count || 0;
+    totalComments += article.comment_count || 0;
   });
   
   let latestFollowers = '-';
@@ -74,7 +78,7 @@ function updateKPICards() {
   
   if (dailyStats.length > 0) {
     const sortedStats = [...dailyStats].sort((a, b) => 
-      new Date(b.date || b.recorded_at) - new Date(a.date || a.recorded_at)
+      new Date(b.date) - new Date(a.date)
     );
     const latest = sortedStats[0];
     if (latest.followers !== undefined && latest.followers !== null) {
@@ -150,29 +154,15 @@ function prepareChartData(period) {
   const aggregated = {};
   
   analyticsData.forEach(article => {
-    const history = article.stats_history || article.history || [];
+    const recordedAt = article.recorded_at || article.updated_at || article.created_at;
+    const dateStr = recordedAt ? recordedAt.split('T')[0] : new Date().toISOString().split('T')[0];
+    const key = getAggregationKey(dateStr, period);
     
-    if (history.length === 0) {
-      const today = new Date().toISOString().split('T')[0];
-      const key = getAggregationKey(today, period);
-      if (!aggregated[key]) {
-        aggregated[key] = { pv: 0, likes: 0 };
-      }
-      aggregated[key].pv += article.read_count || article.pv || 0;
-      aggregated[key].likes += article.like_count || article.likes || 0;
-      return;
+    if (!aggregated[key]) {
+      aggregated[key] = { pv: 0, likes: 0 };
     }
-    
-    history.forEach(stat => {
-      const dateStr = stat.date || stat.recorded_at;
-      const key = getAggregationKey(dateStr, period);
-      
-      if (!aggregated[key]) {
-        aggregated[key] = { pv: 0, likes: 0 };
-      }
-      aggregated[key].pv += stat.pv || stat.read_count || 0;
-      aggregated[key].likes += stat.likes || stat.like_count || 0;
-    });
+    aggregated[key].pv += article.read_count || 0;
+    aggregated[key].likes += article.like_count || 0;
   });
   
   const sortedKeys = Object.keys(aggregated).sort();
@@ -230,46 +220,14 @@ function updateArticleStatsTable() {
   if (table) table.style.display = 'table';
   
   const articleStats = analyticsData.map(article => {
-    const history = article.stats_history || article.history || [];
-    
-    const currentPV = article.read_count || article.pv || 0;
-    const currentLikes = article.like_count || article.likes || 0;
-    const currentComments = article.comment_count || article.comments || 0;
-    
-    let trend = 'flat';
-    let trendValue = 0;
-    
-    if (history.length >= 2) {
-      const sortedHistory = [...history].sort((a, b) => 
-        new Date(a.date || a.recorded_at) - new Date(b.date || b.recorded_at)
-      );
-      
-      const latest = sortedHistory[sortedHistory.length - 1];
-      const previous = sortedHistory[sortedHistory.length - 2];
-      
-      const latestPV = latest.pv || latest.read_count || 0;
-      const previousPV = previous.pv || previous.read_count || 0;
-      
-      if (previousPV > 0) {
-        const diff = latestPV - previousPV;
-        trendValue = Math.round((diff / previousPV) * 100);
-        
-        if (trendValue > 5) {
-          trend = 'up';
-        } else if (trendValue < -5) {
-          trend = 'down';
-        }
-      }
-    }
-    
     return {
-      title: article.title || article.name || '無題',
-      url: article.url || article.note_url || '#',
-      pv: currentPV,
-      likes: currentLikes,
-      comments: currentComments,
-      trend,
-      trendValue
+      title: article.title || '無題',
+      url: article.note_url || '#',
+      pv: article.read_count || 0,
+      likes: article.like_count || 0,
+      comments: article.comment_count || 0,
+      trend: 'flat',
+      trendValue: 0
     };
   });
   
@@ -344,16 +302,15 @@ function aggregateByPeriod(startDate, endDate) {
   let pv = 0, likes = 0, comments = 0;
   
   analyticsData.forEach(article => {
-    const history = article.stats_history || article.history || [];
-    
-    history.forEach(stat => {
-      const date = new Date(stat.date || stat.recorded_at);
+    const recordedAt = article.recorded_at || article.updated_at || article.created_at;
+    if (recordedAt) {
+      const date = new Date(recordedAt);
       if (date >= start && date <= end) {
-        pv += stat.pv || stat.read_count || 0;
-        likes += stat.likes || stat.like_count || 0;
-        comments += stat.comments || stat.comment_count || 0;
+        pv += article.read_count || 0;
+        likes += article.like_count || 0;
+        comments += article.comment_count || 0;
       }
-    });
+    }
   });
   
   return { pv, likes, comments };
@@ -399,7 +356,7 @@ function openStatsModal() {
   
   if (dailyStats.length > 0) {
     const sortedStats = [...dailyStats].sort((a, b) => 
-      new Date(b.date || b.recorded_at) - new Date(a.date || a.recorded_at)
+      new Date(b.date) - new Date(a.date)
     );
     const latest = sortedStats[0];
     const followersInput = document.getElementById('stats-followers');
@@ -442,18 +399,21 @@ async function saveStats() {
       revenue: revenue ? parseInt(revenue, 10) : null
     };
     
-    // supabaseClientを使用（config.jsで定義）
+    // Supabaseに保存
     if (typeof supabaseClient !== 'undefined' && supabaseClient) {
       const { error } = await supabaseClient
         .from('daily_stats')
         .upsert(data, { onConflict: 'date' });
       
-      if (error) throw error;
+      if (error) {
+        console.error('Supabase保存エラー:', error);
+        throw error;
+      }
+      console.log('Supabaseに保存成功');
     }
     
-    const existingIndex = dailyStats.findIndex(s => 
-      (s.date || s.recorded_at || '').split('T')[0] === date
-    );
+    // ローカルキャッシュも更新
+    const existingIndex = dailyStats.findIndex(s => s.date === date);
     
     if (existingIndex >= 0) {
       if (data.followers !== null) dailyStats[existingIndex].followers = data.followers;
