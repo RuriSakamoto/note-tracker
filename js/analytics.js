@@ -194,22 +194,37 @@ function updateChart(period = 'daily') {
 
 // チャートデータ準備（overall_statsを使用）
 function prepareChartData(period) {
-  const aggregated = {};
+  // 日付順にソート（昇順）
+  const sortedStats = [...overallStats].sort((a, b) => 
+    new Date(a.date) - new Date(b.date)
+  );
   
-  // overall_statsから日付ごとの全体PV/スキを取得
-  overallStats.forEach(stat => {
+  const aggregated = {};
+  let prevPV = 0;
+  let prevLikes = 0;
+  
+  // 日ごとの増分を計算
+  sortedStats.forEach(stat => {
     const dateStr = stat.date;
     const key = getAggregationKey(dateStr, period);
+    
+    const currentPV = stat.total_pv || 0;
+    const currentLikes = stat.total_likes || 0;
+    
+    // 増分を計算（初日は累計値そのものを使用）
+    const pvDiff = prevPV > 0 ? Math.max(0, currentPV - prevPV) : currentPV;
+    const likesDiff = prevLikes > 0 ? Math.max(0, currentLikes - prevLikes) : currentLikes;
     
     if (!aggregated[key]) {
       aggregated[key] = { pv: 0, likes: 0 };
     }
-    // 同じ期間に複数データがある場合は最新を使用
-    if (!aggregated[key].date || stat.date > aggregated[key].date) {
-      aggregated[key].pv = stat.total_pv || 0;
-      aggregated[key].likes = stat.total_likes || 0;
-      aggregated[key].date = stat.date;
-    }
+    
+    // 同じ期間のデータは合算
+    aggregated[key].pv += pvDiff;
+    aggregated[key].likes += likesDiff;
+    
+    prevPV = currentPV;
+    prevLikes = currentLikes;
   });
   
   const sortedKeys = Object.keys(aggregated).sort();
@@ -271,6 +286,11 @@ function updateArticleStatsTable() {
   
   analyticsData.forEach(stat => {
     const articleId = stat.article_id;
+    // article_idがnullまたはundefinedの場合はスキップ
+    if (!articleId) {
+      console.warn('article_idが未設定のデータをスキップ:', stat);
+      return;
+    }
     if (!statsByArticle[articleId]) {
       statsByArticle[articleId] = [];
     }
@@ -313,10 +333,24 @@ function updateArticleStatsTable() {
     };
   });
   
-  // PV順でソート
-  articleStats.sort((a, b) => b.pv - a.pv);
+  // ========== 重複排除ロジック ==========
+  // タイトルとURLで重複を排除（PVが高い方を優先）
+  const uniqueArticles = {};
+  articleStats.forEach(article => {
+    // URLを優先キーとし、なければタイトルを使用
+    const key = article.url !== '#' ? article.url : article.title;
+    
+    if (!uniqueArticles[key] || uniqueArticles[key].pv < article.pv) {
+      uniqueArticles[key] = article;
+    }
+  });
+  const dedupedStats = Object.values(uniqueArticles);
+  // ========================================
   
-  tbody.innerHTML = articleStats.map(article => {
+  // PV順でソート
+  dedupedStats.sort((a, b) => b.pv - a.pv);
+  
+  tbody.innerHTML = dedupedStats.map(article => {
     const trendIcon = getTrendIcon(article.trend, article.trendValue);
     const titleHtml = article.url !== '#' 
       ? `<a href="${escapeHtml(article.url)}" target="_blank" rel="noopener">${escapeHtml(article.title)}</a>`
