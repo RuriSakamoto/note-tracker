@@ -35,13 +35,26 @@ async function initApp() {
 
 // Supabase初期化
 function initSupabase() {
-  if (typeof window.supabaseClient === 'undefined') {
-    if (typeof supabase !== 'undefined' && typeof supabase.createClient === 'function') {
-      window.supabaseClient = supabase.createClient(
-        CONFIG.SUPABASE_URL,
-        CONFIG.SUPABASE_ANON_KEY
-      );
-    }
+  // 既にSupabaseクライアントが存在する場合はスキップ
+  if (typeof window.supabaseClient !== 'undefined' && window.supabaseClient) {
+    return;
+  }
+  
+  // NoteTrackerConfigから設定を取得
+  const config = typeof NoteTrackerConfig !== 'undefined' ? NoteTrackerConfig : null;
+  
+  if (!config || !config.supabase || !config.supabase.url || !config.supabase.anonKey) {
+    console.warn('Supabase設定が見つかりません。ローカルモードで動作します。');
+    return;
+  }
+  
+  // Supabaseクライアント作成
+  if (typeof supabase !== 'undefined' && typeof supabase.createClient === 'function') {
+    window.supabaseClient = supabase.createClient(
+      config.supabase.url,
+      config.supabase.anonKey
+    );
+    console.log('Supabaseクライアント初期化完了');
   }
 }
 
