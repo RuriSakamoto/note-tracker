@@ -5,7 +5,7 @@
 let analyticsChart = null;
 let analyticsData = [];
 let dailyStats = [];
-let articlesMap = {}; // 記事ID → 記事情報のマップ
+let articlesMap = {};
 
 // アナリティクス初期化
 async function initAnalytics() {
@@ -27,7 +27,6 @@ async function loadAnalyticsData() {
       if (articlesError) {
         console.error('articles取得エラー:', articlesError);
       } else if (articles) {
-        // 記事IDをキーにしたマップを作成
         articlesMap = {};
         articles.forEach(article => {
           articlesMap[article.id] = article;
@@ -83,9 +82,23 @@ async function loadAnalyticsData() {
   }
 }
 
+// 記事ごとの最新統計を取得
+function getLatestStatsByArticle() {
+  const latestByArticle = {};
+  
+  // 日付降順でソート済みなので、最初に出てきたものが最新
+  analyticsData.forEach(stat => {
+    if (!latestByArticle[stat.article_id]) {
+      latestByArticle[stat.article_id] = stat;
+    }
+  });
+  
+  return latestByArticle;
+}
+
 // KPIカード更新
 function updateKPICards() {
-  // 記事ごとの最新データを集計
+  // 各記事の最新データのみを集計
   const latestByArticle = getLatestStatsByArticle();
   
   let totalPV = 0;
@@ -125,20 +138,6 @@ function updateKPICards() {
   if (commentsEl) commentsEl.textContent = totalComments.toLocaleString();
   if (followersEl) followersEl.textContent = latestFollowers;
   if (revenueEl) revenueEl.textContent = latestRevenue;
-}
-
-// 記事ごとの最新統計を取得
-function getLatestStatsByArticle() {
-  const latestByArticle = {};
-  
-  // 日付でソート済みなので、最初に出てきたものが最新
-  analyticsData.forEach(stat => {
-    if (!latestByArticle[stat.article_id]) {
-      latestByArticle[stat.article_id] = stat;
-    }
-  });
-  
-  return latestByArticle;
 }
 
 // チャート更新
@@ -192,6 +191,7 @@ function updateChart(period = 'daily') {
 function prepareChartData(period) {
   const aggregated = {};
   
+  // 日付ごとに全記事のPV/スキを合計
   analyticsData.forEach(stat => {
     const dateStr = stat.date;
     const key = getAggregationKey(dateStr, period);
@@ -263,18 +263,15 @@ function updateArticleStatsTable() {
   analyticsData.forEach(stat => {
     const articleId = stat.article_id;
     if (!statsByArticle[articleId]) {
-      statsByArticle[articleId] = {
-        history: [],
-        latest: null
-      };
+      statsByArticle[articleId] = [];
     }
-    statsByArticle[articleId].history.push(stat);
+    statsByArticle[articleId].push(stat);
   });
   
   // 各記事の最新値と前日比を計算
   const articleStats = Object.keys(statsByArticle).map(articleId => {
     const articleInfo = articlesMap[articleId] || {};
-    const history = statsByArticle[articleId].history.sort((a, b) => 
+    const history = statsByArticle[articleId].sort((a, b) => 
       new Date(b.date) - new Date(a.date)
     );
     
@@ -376,16 +373,35 @@ function aggregateByPeriod(startDate, endDate) {
   const end = new Date(endDate);
   end.setHours(23, 59, 59, 999);
   
-  let pv = 0, likes = 0, comments = 0;
+  // 期間内の各日付で、各記事の最新データを取得して合計
+  const dateRange = {};
   
   analyticsData.forEach(stat => {
     const date = new Date(stat.date);
     if (date >= start && date <= end) {
+      const dateKey = stat.date;
+      if (!dateRange[dateKey]) {
+        dateRange[dateKey] = {};
+      }
+      // 同じ日付・同じ記事は1回だけカウント
+      if (!dateRange[dateKey][stat.article_id]) {
+        dateRange[dateKey][stat.article_id] = stat;
+      }
+    }
+  });
+  
+  let pv = 0, likes = 0, comments = 0;
+  
+  // 最新の日付のデータのみを使用
+  const dates = Object.keys(dateRange).sort().reverse();
+  if (dates.length > 0) {
+    const latestDate = dates[0];
+    Object.values(dateRange[latestDate]).forEach(stat => {
       pv += stat.pv || 0;
       likes += stat.likes || 0;
       comments += stat.comments || 0;
-    }
-  });
+    });
+  }
   
   return { pv, likes, comments };
 }
