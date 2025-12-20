@@ -35,15 +35,9 @@ async function initApp() {
 
 // Supabase初期化
 function initSupabase() {
-  if (typeof window.supabase === 'undefined') {
-    if (typeof supabaseJs !== 'undefined') {
-      window.supabase = supabaseJs.createClient(
-        CONFIG.SUPABASE_URL,
-        CONFIG.SUPABASE_ANON_KEY
-      );
-    } else if (typeof supabase !== 'undefined' && typeof supabase.createClient === 'function') {
-      // CDN版の場合
-      window.supabase = supabase.createClient(
+  if (typeof window.supabaseClient === 'undefined') {
+    if (typeof supabase !== 'undefined' && typeof supabase.createClient === 'function') {
+      window.supabaseClient = supabase.createClient(
         CONFIG.SUPABASE_URL,
         CONFIG.SUPABASE_ANON_KEY
       );
@@ -126,14 +120,17 @@ async function fetchNoteStatsDirectly() {
   const authToken = localStorage.getItem('note_auth_token');
   const session = localStorage.getItem('note_session');
   
+  // APIが期待する形式に合わせる
   const response = await fetch('/api/sync-note', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      note_gql_auth_token: authToken,
-      _note_session_v5: session
+      cookies: {
+        note_gql_auth_token: authToken,
+        _note_session_v5: session
+      }
     })
   });
   
@@ -142,5 +139,12 @@ async function fetchNoteStatsDirectly() {
     throw new Error(errorData.error || `API Error: ${response.status}`);
   }
   
-  return await response.json();
+  const result = await response.json();
+  
+  // 取得したデータをローカルキャッシュに保存
+  if (result.data) {
+    localStorage.setItem('note_analytics_cache', JSON.stringify(result.data));
+  }
+  
+  return result;
 }
