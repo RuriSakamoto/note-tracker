@@ -18,18 +18,18 @@ async function initAnalytics() {
 async function loadAnalyticsData() {
   try {
     if (typeof supabaseClient !== 'undefined' && supabaseClient) {
-      // note_statsテーブルからデータ取得
-      const { data: articles, error: articlesError } = await supabaseClient
-        .from('note_stats')
+      // article_analyticsテーブルからデータ取得
+      const { data: analytics, error: analyticsError } = await supabaseClient
+        .from('article_analytics')
         .select('*')
         .order('read_count', { ascending: false });
       
-      if (articlesError) {
-        console.error('note_stats取得エラー:', articlesError);
-      } else if (articles) {
-        analyticsData = articles;
+      if (analyticsError) {
+        console.error('article_analytics取得エラー:', analyticsError);
+      } else if (analytics) {
+        analyticsData = analytics;
         localStorage.setItem('note_analytics_cache', JSON.stringify(analyticsData));
-        console.log('note_stats取得成功:', articles.length, '件');
+        console.log('article_analytics取得成功:', analytics.length, '件');
       }
       
       // daily_statsテーブルからデータ取得
@@ -39,7 +39,7 @@ async function loadAnalyticsData() {
         .order('date', { ascending: false });
       
       if (statsError) {
-        console.warn('daily_stats取得エラー（テーブル未作成の可能性）:', statsError.message);
+        console.error('daily_stats取得エラー:', statsError);
       } else if (stats) {
         dailyStats = stats;
         localStorage.setItem('note_daily_stats_cache', JSON.stringify(dailyStats));
@@ -68,9 +68,9 @@ function updateKPICards() {
   let totalComments = 0;
   
   analyticsData.forEach(article => {
-    totalPV += article.read_count || 0;
-    totalLikes += article.like_count || 0;
-    totalComments += article.comment_count || 0;
+    totalPV += article.read_count || article.pv || 0;
+    totalLikes += article.like_count || article.likes || 0;
+    totalComments += article.comment_count || article.comments || 0;
   });
   
   let latestFollowers = '-';
@@ -161,8 +161,8 @@ function prepareChartData(period) {
     if (!aggregated[key]) {
       aggregated[key] = { pv: 0, likes: 0 };
     }
-    aggregated[key].pv += article.read_count || 0;
-    aggregated[key].likes += article.like_count || 0;
+    aggregated[key].pv += article.read_count || article.pv || 0;
+    aggregated[key].likes += article.like_count || article.likes || 0;
   });
   
   const sortedKeys = Object.keys(aggregated).sort();
@@ -221,11 +221,11 @@ function updateArticleStatsTable() {
   
   const articleStats = analyticsData.map(article => {
     return {
-      title: article.title || '無題',
-      url: article.note_url || '#',
-      pv: article.read_count || 0,
-      likes: article.like_count || 0,
-      comments: article.comment_count || 0,
+      title: article.title || article.name || '無題',
+      url: article.note_url || article.url || '#',
+      pv: article.read_count || article.pv || 0,
+      likes: article.like_count || article.likes || 0,
+      comments: article.comment_count || article.comments || 0,
       trend: 'flat',
       trendValue: 0
     };
@@ -306,9 +306,9 @@ function aggregateByPeriod(startDate, endDate) {
     if (recordedAt) {
       const date = new Date(recordedAt);
       if (date >= start && date <= end) {
-        pv += article.read_count || 0;
-        likes += article.like_count || 0;
-        comments += article.comment_count || 0;
+        pv += article.read_count || article.pv || 0;
+        likes += article.like_count || article.likes || 0;
+        comments += article.comment_count || article.comments || 0;
       }
     }
   });
