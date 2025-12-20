@@ -1,63 +1,74 @@
-// Supabase初期化は api.js で行われているので削除
+/**
+ * note アクセス解析ツール - メインエントリーポイント
+ */
 
-// ページ読み込み時の初期化
-document.addEventListener('DOMContentLoaded', async () => {
-  const currentTab = getCurrentTab();
-  
-  if (currentTab === 'progress') {
-    await loadArticles();
-  } else if (currentTab === 'analytics') {
-    // loadAnalyticsが定義されているか確認
-    if (typeof loadAnalytics === 'function') {
-      await loadAnalytics();
-    } else {
-      console.warn('loadAnalytics is not defined yet');
-    }
-  }
-  
-  initTabs();
+// アプリケーション初期化
+document.addEventListener('DOMContentLoaded', () => {
+  initApp();
 });
 
-// タブ切り替え
-function initTabs() {
-  const tabs = document.querySelectorAll('.tab');
+async function initApp() {
+  console.log('note アクセス解析ツール 初期化開始');
   
+  // note設定の読み込み
+  loadNoteSettings();
+  
+  // アナリティクスの初期化
+  initAnalytics();
+  
+  // チャート期間タブのイベント設定
+  initChartPeriodTabs();
+  
+  // 最終同期時刻の表示
+  updateLastSyncTime();
+  
+  console.log('初期化完了');
+}
+
+// チャート期間タブの初期化
+function initChartPeriodTabs() {
+  const tabs = document.querySelectorAll('#chart-period-tabs .filter-tab');
   tabs.forEach(tab => {
-    tab.addEventListener('click', async function() {
-      const targetTab = this.getAttribute('data-tab');
-      
-      // アクティブ状態を切り替え
+    tab.addEventListener('click', () => {
       tabs.forEach(t => t.classList.remove('active'));
-      this.classList.add('active');
-      
-      // コンテンツを切り替え
-      document.querySelectorAll('.tab-content').forEach(content => {
-        content.classList.remove('active');
-      });
-      
-      const targetContent = document.getElementById(`${targetTab}-tab`);
-      if (targetContent) {
-        targetContent.classList.add('active');
-      }
-      
-      // タブに応じてデータを読み込み
-      if (targetTab === 'progress') {
-        await loadArticles();
-      } else if (targetTab === 'analytics') {
-        // loadAnalyticsが定義されているか確認
-        if (typeof loadAnalytics === 'function') {
-          await loadAnalytics();
-        }
-      }
-      
-      // URLを更新
-      history.pushState(null, '', `?tab=${targetTab}`);
+      tab.classList.add('active');
+      const period = tab.dataset.period;
+      updateChart(period);
     });
   });
 }
 
-// 現在のタブを取得
-function getCurrentTab() {
-  const params = new URLSearchParams(window.location.search);
-  return params.get('tab') || 'progress';
+// 最終同期時刻の更新
+function updateLastSyncTime() {
+  const lastSync = localStorage.getItem('note_last_sync');
+  const element = document.getElementById('last-sync-time');
+  if (lastSync) {
+    const date = new Date(lastSync);
+    element.textContent = `最終同期: ${date.toLocaleString('ja-JP')}`;
+  } else {
+    element.textContent = '最終同期: -';
+  }
+}
+
+// noteから同期
+async function syncFromNote() {
+  const username = localStorage.getItem('note_username');
+  if (!username) {
+    showToast('先にnote連携設定でユーザー名を設定してください');
+    openNoteSettings();
+    return;
+  }
+  
+  showToast('noteからデータを取得中...');
+  
+  try {
+    await fetchNoteAnalytics(username);
+    localStorage.setItem('note_last_sync', new Date().toISOString());
+    updateLastSyncTime();
+    initAnalytics(); // データ再読み込み
+    showToast('同期が完了しました');
+  } catch (error) {
+    console.error('同期エラー:', error);
+    showToast('同期に失敗しました: ' + error.message);
+  }
 }

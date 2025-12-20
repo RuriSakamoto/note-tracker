@@ -1,164 +1,146 @@
-// CSVエクスポート機能
-
 /**
- * 記事別の推移データをCSVエクスポート
- * 各記事の日付順にビュー数、スキ数、コメント数を出力
+ * note アクセス解析ツール - CSVエクスポート機能
  */
-async function exportArticleAnalyticsCsv() {
-  try {
-    // データ取得
-    const articleAnalytics = await fetchArticleAnalytics();
-    
-    if (!articleAnalytics || articleAnalytics.length === 0) {
-      showToast('エクスポートするデータがありません');
-      return;
-    }
-    
-    // 記事ごとにグループ化して日付順にソート
-    const groupedByArticle = {};
-    
-    articleAnalytics.forEach(item => {
-      const articleTitle = item.articles?.title || '不明';
-      const articleId = item.article_id;
-      
-      if (!groupedByArticle[articleId]) {
-        groupedByArticle[articleId] = {
-          title: articleTitle,
-          data: []
-        };
-      }
-      
-      groupedByArticle[articleId].data.push({
-        date: item.date,
-        pv: item.pv || 0,
-        likes: item.likes || 0,
-        comments: item.comments || 0
-      });
-    });
-    
-    // CSV生成
-    let csvContent = '\uFEFF'; // BOM for Excel UTF-8 support
-    csvContent += '記事タイトル,日付,ビュー数,スキ数,コメント数\n';
-    
-    // 記事ごとにデータを追加
-    Object.values(groupedByArticle).forEach(article => {
-      // 日付順にソート（昇順）
-      article.data.sort((a, b) => new Date(a.date) - new Date(b.date));
-      
-      article.data.forEach(row => {
-        const line = [
-          `"${article.title.replace(/"/g, '""')}"`, // タイトル（ダブルクォートをエスケープ）
-          row.date,
-          row.pv,
-          row.likes,
-          row.comments
-        ].join(',');
-        
-        csvContent += line + '\n';
-      });
-    });
-    
-    // ダウンロード
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
-    const timestamp = new Date().toISOString().split('T')[0];
-    link.setAttribute('href', url);
-    link.setAttribute('download', `note_analytics_${timestamp}.csv`);
-    link.style.visibility = 'hidden';
-    
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    showToast('CSVファイルをエクスポートしました');
-    
-  } catch (error) {
-    console.error('Error exporting CSV:', error);
-    showToast('エクスポートに失敗しました');
-  }
+
+// エクスポートモーダルを開く
+function openExportModal() {
+  const modal = document.getElementById('export-modal');
+  
+  // デフォルト期間を設定（過去30日）
+  const today = new Date();
+  const thirtyDaysAgo = new Date(today);
+  thirtyDaysAgo.setDate(today.getDate() - 30);
+  
+  document.getElementById('export-start').value = thirtyDaysAgo.toISOString().split('T')[0];
+  document.getElementById('export-end').value = today.toISOString().split('T')[0];
+  
+  modal.classList.add('active');
 }
 
-/**
- * 全記事の統計サマリーをCSVエクスポート
- */
-async function exportArticleSummaryCsv() {
-  try {
-    const articleAnalytics = await fetchArticleAnalytics();
+// エクスポートモーダルを閉じる
+function closeExportModal() {
+  document.getElementById('export-modal').classList.remove('active');
+}
+
+// エクスポート実行
+function executeExport() {
+  const exportType = document.getElementById('export-type').value;
+  const startDate = document.getElementById('export-start').value;
+  const endDate = document.getElementById('export-end').value;
+  
+  let csvContent = '';
+  
+  if (exportType === 'detail') {
+    csvContent = generateDetailCSV(startDate, endDate);
+  } else {
+    csvContent = generateSummaryCSV(startDate, endDate);
+  }
+  
+  if (!csvContent) {
+    showToast('エクスポートするデータがありません');
+    return;
+  }
+  
+  // BOM付きUTF-8でダウンロード
+  const bom = '\uFEFF';
+  const blob = new Blob([bom + csvContent], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `note_analytics_${exportType}_${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  
+  closeExportModal();
+  showToast('エクスポートが完了しました');
+}
+
+// 詳細データCSV生成
+function generateDetailCSV(startDate, endDate) {
+  const stored = localStorage.getItem('note_analytics_data');
+  const analyticsData = stored ? JSON.parse(stored) : [];
+  
+  if (analyticsData.length === 0) return '';
+  
+  const rows = [];
+  rows.push(['日付', '記事タイトル', 'PV', 'スキ', 'コメント'].join(','));
+  
+  const start = startDate ? new Date(startDate) : null;
+  const end = endDate ? new Date(endDate) : null;
+  
+  analyticsData.forEach(article => {
+    if (!article.stats) return;
     
-    if (!articleAnalytics || articleAnalytics.length === 0) {
-      showToast('エクスポートするデータがありません');
-      return;
-    }
+    article.stats.forEach(stat => {
+      const date = new Date(stat.date);
+      
+      // 期間フィルタ
+      if (start && date < start) return;
+      if (end && date > end) return;
+      
+      rows.push([
+        stat.date,
+        `"${(article.title || '').replace(/"/g, '""')}"`,
+        stat.pv || 0,
+        stat.likes || 0,
+        stat.comments || 0
+      ].join(','));
+    });
+  });
+  
+  return rows.join('\n');
+}
+
+// サマリーCSV生成
+function generateSummaryCSV(startDate, endDate) {
+  const stored = localStorage.getItem('note_analytics_data');
+  const analyticsData = stored ? JSON.parse(stored) : [];
+  
+  if (analyticsData.length === 0) return '';
+  
+  const rows = [];
+  rows.push(['記事タイトル', '累計PV', '累計スキ', '累計コメント', '最終更新日'].join(','));
+  
+  const start = startDate ? new Date(startDate) : null;
+  const end = endDate ? new Date(endDate) : null;
+  
+  analyticsData.forEach(article => {
+    if (!article.stats || article.stats.length === 0) return;
     
-    // 記事ごとに集計
-    const summary = {};
+    let totalPV = 0;
+    let totalLikes = 0;
+    let totalComments = 0;
+    let lastDate = '';
     
-    articleAnalytics.forEach(item => {
-      const articleTitle = item.articles?.title || '不明';
-      const articleId = item.article_id;
+    article.stats.forEach(stat => {
+      const date = new Date(stat.date);
       
-      if (!summary[articleId]) {
-        summary[articleId] = {
-          title: articleTitle,
-          totalPv: 0,
-          totalLikes: 0,
-          totalComments: 0,
-          firstDate: item.date,
-          lastDate: item.date
-        };
-      }
+      // 期間フィルタ
+      if (start && date < start) return;
+      if (end && date > end) return;
       
-      summary[articleId].totalPv += item.pv || 0;
-      summary[articleId].totalLikes += item.likes || 0;
-      summary[articleId].totalComments += item.comments || 0;
+      totalPV += stat.pv || 0;
+      totalLikes += stat.likes || 0;
+      totalComments += stat.comments || 0;
       
-      if (item.date < summary[articleId].firstDate) {
-        summary[articleId].firstDate = item.date;
-      }
-      if (item.date > summary[articleId].lastDate) {
-        summary[articleId].lastDate = item.date;
+      if (!lastDate || stat.date > lastDate) {
+        lastDate = stat.date;
       }
     });
     
-    // CSV生成
-    let csvContent = '\uFEFF';
-    csvContent += '記事タイトル,初回記録日,最終記録日,総ビュー数,総スキ数,総コメント数\n';
-    
-    Object.values(summary)
-      .sort((a, b) => b.totalPv - a.totalPv) // PV数で降順ソート
-      .forEach(article => {
-        const line = [
-          `"${article.title.replace(/"/g, '""')}"`,
-          article.firstDate,
-          article.lastDate,
-          article.totalPv,
-          article.totalLikes,
-          article.totalComments
-        ].join(',');
-        
-        csvContent += line + '\n';
-      });
-    
-    // ダウンロード
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    
-    const timestamp = new Date().toISOString().split('T')[0];
-    link.setAttribute('href', url);
-    link.setAttribute('download', `note_summary_${timestamp}.csv`);
-    link.style.visibility = 'hidden';
-    
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    showToast('サマリーCSVをエクスポートしました');
-    
-  } catch (error) {
-    console.error('Error exporting summary CSV:', error);
-    showToast('エクスポートに失敗しました');
-  }
+    if (lastDate) {
+      rows.push([
+        `"${(article.title || '').replace(/"/g, '""')}"`,
+        totalPV,
+        totalLikes,
+        totalComments,
+        lastDate
+      ].join(','));
+    }
+  });
+  
+  return rows.join('\n');
 }
