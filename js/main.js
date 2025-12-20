@@ -11,8 +11,8 @@ async function initApp() {
   console.log('note アクセス解析ツール 初期化開始');
   
   try {
-    // Supabase初期化（API経由で設定取得）
-    await initSupabase();
+    // Supabase確認（config.jsで既に初期化済み）
+    checkSupabase();
     
     // note設定の読み込み
     loadNoteSettings();
@@ -33,39 +33,14 @@ async function initApp() {
   }
 }
 
-// Supabase初期化（API経由で設定取得）
-async function initSupabase() {
-  // 既にSupabaseクライアントが存在する場合はスキップ
-  if (typeof window.supabaseClient !== 'undefined' && window.supabaseClient) {
-    return;
-  }
-  
-  try {
-    // APIから設定を取得
-    const response = await fetch('/api/config');
-    if (!response.ok) {
-      throw new Error('設定の取得に失敗しました');
-    }
-    
-    const config = await response.json();
-    
-    if (!config.supabase || !config.supabase.url || !config.supabase.anonKey) {
-      console.warn('Supabase設定が不完全です。ローカルモードで動作します。');
-      return;
-    }
-    
-    // Supabaseクライアント作成
-    if (typeof supabase !== 'undefined' && typeof supabase.createClient === 'function') {
-      window.supabaseClient = supabase.createClient(
-        config.supabase.url,
-        config.supabase.anonKey
-      );
-      console.log('Supabaseクライアント初期化完了');
-    } else {
-      console.warn('Supabase SDKが読み込まれていません');
-    }
-  } catch (error) {
-    console.warn('Supabase初期化をスキップ:', error.message);
+// Supabase確認（config.jsで既に初期化済み）
+function checkSupabase() {
+  if (typeof supabase !== 'undefined' && supabase) {
+    // config.jsで作成されたsupabaseクライアントをwindow.supabaseClientにも設定
+    window.supabaseClient = supabase;
+    console.log('Supabaseクライアント確認完了');
+  } else {
+    console.warn('Supabaseクライアントが見つかりません。ローカルモードで動作します。');
   }
 }
 

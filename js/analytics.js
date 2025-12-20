@@ -17,7 +17,7 @@ async function initAnalytics() {
 // データ読み込み（Supabase + ローカルキャッシュ）
 async function loadAnalyticsData() {
   try {
-    // Supabaseクライアントが利用可能か確認
+    // Supabaseクライアントが利用可能か確認（config.jsで定義）
     if (typeof supabase !== 'undefined' && supabase) {
       // 記事別アクセスデータ取得
       const { data: articles, error: articlesError } = await supabase
@@ -324,6 +324,14 @@ function getTrendIcon(trend, value) {
   }
 }
 
+// HTMLエスケープ
+function escapeHtml(text) {
+  if (!text) return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
 // 期間比較
 function comparePeriods() {
   const p1Start = document.getElementById('period1-start').value;
@@ -458,7 +466,7 @@ async function saveStats() {
       revenue: revenue ? parseInt(revenue, 10) : null
     };
     
-    // Supabaseに保存
+    // Supabaseに保存（config.jsで定義されたsupabaseを使用）
     if (typeof supabase !== 'undefined' && supabase) {
       const { error } = await supabase
         .from('daily_stats')
